@@ -69,11 +69,13 @@ All legacy standard logging has been eradicated in favor of `log/slog`. Wait 30 
 ### 1. Build from Source
 Ensure you have Go 1.22+ installed.
 ```bash
-# Build all client/server binaries for Linux (amd64/arm64)
-make build
-# OR manually:
-GOOS=linux GOARCH=amd64 go build -o bin/uproxy-server-linux-amd64 ./cmd/uproxy-server
-GOOS=linux GOARCH=amd64 go build -o bin/uproxy-client-linux-amd64 ./cmd/uproxy-client
+# Build server and client for amd64
+go build -o bin/uproxy-server-amd64 ./cmd/uproxy-server
+go build -o bin/uproxy-client-amd64 ./cmd/uproxy-client
+
+# Or build for arm64
+GOARCH=arm64 go build -o bin/uproxy-server-arm64 ./cmd/uproxy-server
+GOARCH=arm64 go build -o bin/uproxy-client-arm64 ./cmd/uproxy-client
 ```
 
 ### 2. Configure Authentication
@@ -84,16 +86,22 @@ GOOS=linux GOARCH=amd64 go build -o bin/uproxy-client-linux-amd64 ./cmd/uproxy-c
 ### 3. Run the Server
 ```bash
 # Start the server listening on port 6000
-./bin/uproxy-server-linux-amd64 --listen :6000
+./bin/uproxy-server-amd64 --listen :6000
 
 # (Optional) Force the server to route traffic out of a specific VPN interface
-./bin/uproxy-server-linux-amd64 --listen :6000 --outbound tun0
+./bin/uproxy-server-amd64 --listen :6000 --outbound tun0
+
+# Or use the systemd control script
+sudo ./scripts/uproxy-serverctl.sh start
 ```
 
 ### 4. Run the Client
 ```bash
 # Connect to the server and open a local SOCKS5 proxy on port 1080
-./bin/uproxy-client-linux-amd64 --server 203.0.113.50:6000 --listen 127.0.0.1:1080
+./bin/uproxy-client-amd64 --server 203.0.113.50:6000 --listen 127.0.0.1:1080
+
+# Or use the systemd control script
+sudo ./scripts/uproxy-clientctl.sh start
 ```
 *Note: On your first connection, the client will prompt your terminal to accept the server's host key, exactly like OpenSSH.*
 
