@@ -1,0 +1,18 @@
+# Compiled binaries
+/bin/
+uproxy-client
+uproxy-server
+
+# Logs and Process IDs
+*.log
+*.pid
+uproxy-server.nohup.log
+uproxy-server.pid
+
+# OS and IDEs
+.DS_Store
+.idea/
+.vscode/
+
+# Go
+vendor/
