@@ -446,7 +446,7 @@ func (s *UDPSession) Close() error {
 	s.mu.Unlock()
 
 	if s.l != nil { // belongs to listener
-		s.l.closeSession(s.RemoteAddr())
+		s.l.closeSession(s.kcp.conv)
 		return nil
 	}
 
@@ -1081,10 +1081,9 @@ type (
 		conn         net.PacketConn // the underlying packet connection
 		ownConn      bool           // true if we created conn internally, false if provided by caller
 
-		sessions       map[string]*UDPSession // all sessions accepted by this Listener
-		sessionsByConv map[uint32]*UDPSession // sessions mapped by conversation id (for IP roaming)
-		sessionLock    sync.RWMutex
-		chAccepts      chan *UDPSession // Listen() backlog
+		sessions    map[uint32]*UDPSession // all sessions accepted by this Listener
+		sessionLock sync.RWMutex
+		chAccepts   chan *UDPSession // Listen() backlog
 
 		die     chan struct{} // notify the listener has closed
 		dieOnce sync.Once
@@ -1100,54 +1099,27 @@ type (
 
 // packet input stage
 func (l *Listener) packetInput(data []byte, addr net.Addr) {
-	switch block := l.block.(type) {
-	case nil:
-	case *aeadCrypt:
-		nonceSize := block.NonceSize()
-		if len(data) < nonceSize+block.Overhead() {
-			return
-		}
-
-		nonce := data[:nonceSize]
-		ciphertext := data[nonceSize:]
-
-		plaintext, err := block.Open(ciphertext[:0], nonce, ciphertext, nil)
-		if err != nil {
-			atomic.AddUint64(&DefaultSnmp.InCsumErrors, 1)
-			return
-		}
-
-		data = plaintext
-	default:
-		// decryption and crc32 check
-		if len(data) < cryptHeaderSize {
-			return
-		}
-
-		block.Decrypt(data, data)
+	decrypted := false
+	if l.block != nil && len(data) >= cryptHeaderSize {
+		l.block.Decrypt(data, data)
 		data = data[nonceSize:]
-
 		checksum := crc32.ChecksumIEEE(data[crcSize:])
-		if checksum != binary.LittleEndian.Uint32(data) {
-			atomic.AddUint64(&DefaultSnmp.InCsumErrors, 1)
+		if checksum == binary.LittleEndian.Uint32(data) {
+			data = data[crcSize:]
+			decrypted = true
+		} else {
+			atomic.AddUint64(&DefaultSnmp.InErrs, 1)
 			return
 		}
-
-		data = data[crcSize:]
+	} else if l.block == nil {
+		decrypted = true
 	}
 
-	// basic check for minimum packet size
-	// NOTE: OOB allows sending small packets and even empty packets.
-	if len(data) < min(IKCP_OVERHEAD, fecHeaderSizePlus2+convSize) {
+	if !decrypted {
 		return
 	}
 
-	// look for existing session
-	l.sessionLock.RLock()
-	s, exist := l.sessions[addr.String()]
-	l.sessionLock.RUnlock()
-
-	var conv, sn uint32
+	var conv uint32
 	hasConv := false
 
 	// try to get conversation id from the packet
@@ -1163,7 +1135,7 @@ func (l *Listener) packetInput(data []byte, addr net.Addr) {
 
 		hasConv = true
 		conv = binary.LittleEndian.Uint32(data[fecHeaderSizePlus2:])
-		sn = binary.LittleEndian.Uint32(data[fecHeaderSizePlus2+IKCP_SN_OFFSET:])
+		_ = binary.LittleEndian.Uint32(data[fecHeaderSizePlus2+IKCP_SN_OFFSET:])
 	case typeParity:
 		// parity packet of FEC, conversation id inside
 	case typeOOB:
@@ -1178,47 +1150,24 @@ func (l *Listener) packetInput(data []byte, addr net.Addr) {
 		}
 		hasConv = true
 		conv = binary.LittleEndian.Uint32(data)
-		sn = binary.LittleEndian.Uint32(data[IKCP_SN_OFFSET:])
+		_ = binary.LittleEndian.Uint32(data[IKCP_SN_OFFSET:])
 	}
+
+	if !hasConv {
+		return
+	}
+
+	l.sessionLock.RLock()
+	s, exist := l.sessions[conv]
+	l.sessionLock.RUnlock()
 
 	// on an existing connection
 	if exist {
-		// If we have a valid conversation id or we cannot get conversation id from the packet,
-		// just feed the data into the existing session.
-		if !hasConv || conv == s.kcp.conv {
-			s.kcpInput(data)
-			return
+		// Update the session's address mapping if roamed
+		if s.RemoteAddr().String() != addr.String() {
+			s.remote.Store(addr)
 		}
-		// conversation id mismatched, only accept reset packet with sn == 0
-		if sn != 0 {
-			return
-		}
-		// Close will remove the session from listener's session map,
-		// So we can create a new session with the same addr below.
-		s.Close()
-	} else if hasConv {
-		// Try to find the session by conversation ID (IP roaming / NAT rebinding)
-		l.sessionLock.RLock()
-		sConv, ok := l.sessionsByConv[conv]
-		l.sessionLock.RUnlock()
-
-		if ok && sConv != nil {
-			l.sessionLock.Lock()
-			// Update the session's address mapping
-			delete(l.sessions, sConv.RemoteAddr().String())
-			sConv.remote.Store(addr)
-			l.sessions[addr.String()] = sConv
-			l.sessionLock.Unlock()
-
-			// Feed the data into the found session
-			sConv.kcpInput(data)
-			return
-		}
-	}
-
-	// The connection does not exist, try to create a new one.
-	// But if we don't have a valid conversation id, nothing we can do here except dropping the packet.
-	if !hasConv {
+		s.kcpInput(data)
 		return
 	}
 
@@ -1232,8 +1181,7 @@ func (l *Listener) packetInput(data []byte, addr net.Addr) {
 	s = newUDPSession(conv, l.dataShards, l.parityShards, l, l.conn, false, addr, l.block)
 	s.kcpInput(data)
 	l.sessionLock.Lock()
-	l.sessions[addr.String()] = s
-	l.sessionsByConv[conv] = s
+	l.sessions[conv] = s
 	l.sessionLock.Unlock()
 	l.chAccepts <- s
 }
@@ -1373,15 +1321,12 @@ func (l *Listener) Control(f func(conn net.PacketConn) error) error {
 }
 
 // closeSession notify the listener that a session has closed
-func (l *Listener) closeSession(remote net.Addr) (ret bool) {
+func (l *Listener) closeSession(conv uint32) (ret bool) {
 	l.sessionLock.Lock()
 	defer l.sessionLock.Unlock()
 
-	if s, ok := l.sessions[remote.String()]; ok {
-		delete(l.sessions, remote.String())
-		if s != nil && s.kcp != nil {
-			delete(l.sessionsByConv, s.kcp.conv)
-		}
+	if _, ok := l.sessions[conv]; ok {
+		delete(l.sessions, conv)
 		return true
 	}
 	return false
@@ -1427,8 +1372,7 @@ func serveConn(block BlockCrypt, dataShards, parityShards int, conn net.PacketCo
 	l := new(Listener)
 	l.conn = conn
 	l.ownConn = ownConn
-	l.sessions = make(map[string]*UDPSession)
-	l.sessionsByConv = make(map[uint32]*UDPSession)
+	l.sessions = make(map[uint32]*UDPSession)
 	l.chAccepts = make(chan *UDPSession, acceptBacklog)
 	l.die = make(chan struct{})
 	l.dataShards = dataShards
