@@ -16,3 +16,4 @@ uproxy-server.pid
 
 # Go
 vendor/
+bin/
