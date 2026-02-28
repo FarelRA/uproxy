@@ -633,7 +633,6 @@ func (kcp *KCP) Input(data []byte, pktType PacketType, ackNoDelay bool) int {
 	atomic.AddUint64(&DefaultSnmp.InSegs, inSegs)
 
 	// update rtt with the latest ts
-	// ignore the FEC packet
 	if updateRTT != 0 && pktType == IKCP_PACKET_REGULAR {
 		current := currentMs()
 		if _itimediff(current, latest) >= 0 {
