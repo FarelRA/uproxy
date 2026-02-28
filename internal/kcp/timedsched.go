@@ -121,24 +121,17 @@ func (ts *TimedSched) sched() {
 // prepend is the front desk goroutine to register tasks
 func (ts *TimedSched) prepend() {
 	var tasks []timedFunc
-	for {
-		select {
-		case <-ts.chPrependNotify:
-			ts.prependLock.Lock()
-			// swap slices to minimize time under lock
-			tasks, ts.prependTasks = ts.prependTasks, tasks[:0]
-			ts.prependLock.Unlock()
+	for range ts.chPrependNotify {
+		ts.prependLock.Lock()
+		// swap slices to minimize time under lock
+		tasks, ts.prependTasks = ts.prependTasks, tasks[:0]
+		ts.prependLock.Unlock()
 
-			for k := range tasks {
-				select {
-				case ts.chTask <- tasks[k]:
-					tasks[k] = timedFunc{} // clear to avoid memory leak
-
-				}
-			}
-			tasks = tasks[:0]
-
+		for k := range tasks {
+			ts.chTask <- tasks[k]
+			tasks[k] = timedFunc{} // clear to avoid memory leak
 		}
+		tasks = tasks[:0]
 	}
 }
 

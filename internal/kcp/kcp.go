@@ -252,7 +252,7 @@ func (kcp *KCP) newSegment(size int) (seg segment) {
 // recycleSegment recycles a KCP segment
 func (kcp *KCP) recycleSegment(seg *segment) {
 	if seg.data != nil {
-		defaultBufferPool.Put(seg.data)
+		defaultBufferPool.Put(&seg.data)
 		seg.data = nil
 	}
 }
@@ -390,8 +390,7 @@ func (kcp *KCP) Send(buffer []byte) int {
 	}
 
 	for i := 0; i < count; i++ {
-		var size int
-		size = min(len(buffer), int(kcp.mss))
+		size := min(len(buffer), int(kcp.mss))
 		seg := kcp.newSegment(size)
 		copy(seg.data, buffer[:size])
 		if kcp.stream == 0 { // message mode

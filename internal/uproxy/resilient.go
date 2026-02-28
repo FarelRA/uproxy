@@ -52,37 +52,34 @@ func (r *ResilientPacketConn) telemetryLoop() {
 
 	var lastTx, lastRx int64
 
-	for {
-		select {
-		case <-ticker.C:
-			r.mu.RLock()
-			closed := r.closed
-			r.mu.RUnlock()
-			if closed {
-				return
-			}
+	for range ticker.C {
+		r.mu.RLock()
+		closed := r.closed
+		r.mu.RUnlock()
+		if closed {
+			return
+		}
 
-			tx := atomic.LoadInt64(&r.txBytes)
-			rx := atomic.LoadInt64(&r.rxBytes)
-			txP := atomic.LoadInt64(&r.txPackets)
-			rxP := atomic.LoadInt64(&r.rxPackets)
-			drops := atomic.LoadInt64(&r.drops)
-			rebinds := atomic.LoadInt64(&r.rebinds)
+		tx := atomic.LoadInt64(&r.txBytes)
+		rx := atomic.LoadInt64(&r.rxBytes)
+		txP := atomic.LoadInt64(&r.txPackets)
+		rxP := atomic.LoadInt64(&r.rxPackets)
+		drops := atomic.LoadInt64(&r.drops)
+		rebinds := atomic.LoadInt64(&r.rebinds)
 
-			// Only log if traffic occurred in the last 30s
-			if tx != lastTx || rx != lastRx || drops > 0 || rebinds > 0 {
-				slog.Info("Transport Telemetry (30s interval)",
-					"layer", "resilient",
-					"tx_bytes", tx,
-					"rx_bytes", rx,
-					"tx_pkts", txP,
-					"rx_pkts", rxP,
-					"drops", drops,
-					"rebinds", rebinds,
-				)
-				lastTx = tx
-				lastRx = rx
-			}
+		// Only log if traffic occurred in the last 30s
+		if tx != lastTx || rx != lastRx || drops > 0 || rebinds > 0 {
+			slog.Info("Transport Telemetry (30s interval)",
+				"layer", "resilient",
+				"tx_bytes", tx,
+				"rx_bytes", rx,
+				"tx_pkts", txP,
+				"rx_pkts", rxP,
+				"drops", drops,
+				"rebinds", rebinds,
+			)
+			lastTx = tx
+			lastRx = rx
 		}
 	}
 }
