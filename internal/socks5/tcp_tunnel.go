@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"uninteruptableproxy/internal/uproxy"
+	"uproxy/internal/uproxy"
 )
 
 // HandleTCP runs on the server side to handle a incoming TCP SSH channel.

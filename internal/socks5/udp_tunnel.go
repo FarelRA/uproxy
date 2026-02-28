@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"uninteruptableproxy/internal/uproxy"
+	"uproxy/internal/uproxy"
 )
 
 // parseSOCKS5UDPHeader parses the standard SOCKS5 UDP request header

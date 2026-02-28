@@ -1,4 +1,4 @@
-module uninteruptableproxy
+module uproxy
 
 go 1.26.0
 
