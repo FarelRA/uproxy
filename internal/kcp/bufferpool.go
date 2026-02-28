@@ -30,7 +30,7 @@ import (
 // pre-allocated error to avoid repeated allocations
 var errBufferSizeMismatch = errors.New("buffer size mismatch")
 
-// A system-wide packet buffer shared among sending, receiving and FEC
+// A system-wide packet buffer shared among sending and receiving
 // to mitigate high-frequency memory allocation of packets.
 var defaultBufferPool = newBufferPool(mtuLimit)
 

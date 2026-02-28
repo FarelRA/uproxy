@@ -29,15 +29,6 @@
 // KCP Output      (Reliable Transport Layer)     Reader/Listener (Reception Queue)
 //   |                                               |
 //   v                                               v
-// FEC Encoding    (Forward Error Correction)     Decryption      (Data Security)
-//   |                                               |
-//   v                                               v
-// CRC32 Checksum  (Error Detection)              CRC32 Checksum  (Error Detection)
-//   |                                               |
-//   v                                               v
-// Encryption      (Data Security)                FEC Decoding    (Forward Error Correction)
-//   |                                               |
-//   v                                               v
 // TxQueue         (Transmission Queue)           KCP Input       (Reliable Transport Layer)
 //   |                                               |
 //   v                                               v
@@ -589,7 +580,7 @@ func (s *UDPSession) Control(f func(conn net.PacketConn) error) error {
 // a goroutine to handle post processing of kcp and make the critical section smaller
 // pipeline for outgoing packets (from ARQ to network)
 //
-//	KCP output -> FEC encoding -> CRC32 integrity -> Encryption -> TxQueue
+//	KCP output -> TxQueue
 func (s *UDPSession) postProcess() {
 	txqueue := make([]ipv4.Message, 0, devBacklog)
 	chDie := s.die

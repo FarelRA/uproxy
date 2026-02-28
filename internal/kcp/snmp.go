@@ -31,7 +31,6 @@ type Snmp struct {
 	PassiveOpens        uint64 // accumulated passive open connections
 	CurrEstab           uint64 // current number of established connections
 	InErrs              uint64 // UDP read errors reported from net.PacketConn
-	InCsumErrors        uint64 // checksum errors from CRC32
 	KCPInErrors         uint64 // packet iput errors reported from KCP
 	InPkts              uint64 // incoming packets count
 	OutPkts             uint64 // outgoing packets count
@@ -44,16 +43,9 @@ type Snmp struct {
 	EarlyRetransSegs    uint64 // accmulated early retransmitted segments
 	LostSegs            uint64 // number of segs inferred as lost
 	RepeatSegs          uint64 // number of segs duplicated
-	FECFullShardSet     uint64 // number of FEC segments that are full
-	FECRecovered        uint64 // correct packets recovered from FEC
-	FECErrs             uint64 // incorrect packets recovered from FEC
-	FECParityShards     uint64 // FEC segments received
-	FECShardSet         uint64 // number of parity shards that are not yet received
-	FECShardMin         uint64 // the minimum ID of FEC shards
 	RingBufferSndQueue  uint64 // Len of segments in send queue ring buffer
 	RingBufferRcvQueue  uint64 // Len of segments in receive queue ring buffer
 	RingBufferSndBuffer uint64 // Len of segments in send buffer ring buffer
-	OOBPackets          uint64 // number of OOB packets received
 }
 
 func newSnmp() *Snmp {

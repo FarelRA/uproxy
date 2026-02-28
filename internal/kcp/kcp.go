@@ -58,7 +58,6 @@ type PacketType int8
 
 const (
 	IKCP_PACKET_REGULAR PacketType = iota
-	IKCP_PACKET_FEC
 )
 
 type FlushType int8
