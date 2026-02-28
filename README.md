@@ -107,6 +107,45 @@ sudo ./scripts/uproxy-clientctl.sh start
 
 ---
 
+## 🎛️ Control Scripts
+
+`uproxy` includes systemd-based control scripts for managing the client and server as system services.
+
+### Server Control (`uproxy-serverctl.sh`)
+```bash
+# Available commands
+sudo ./scripts/uproxy-serverctl.sh start    # Start the server
+sudo ./scripts/uproxy-serverctl.sh stop     # Stop the server
+sudo ./scripts/uproxy-serverctl.sh restart  # Restart the server
+sudo ./scripts/uproxy-serverctl.sh reload   # Reload configuration
+sudo ./scripts/uproxy-serverctl.sh status   # Check service status
+sudo ./scripts/uproxy-serverctl.sh health   # Check server health
+sudo ./scripts/uproxy-serverctl.sh logs     # View logs
+sudo ./scripts/uproxy-serverctl.sh tail     # Follow logs in real-time
+```
+
+### Client Control (`uproxy-clientctl.sh`)
+```bash
+# Available commands
+sudo ./scripts/uproxy-clientctl.sh start    # Start the client
+sudo ./scripts/uproxy-clientctl.sh stop     # Stop the client
+sudo ./scripts/uproxy-clientctl.sh restart  # Restart the client
+sudo ./scripts/uproxy-clientctl.sh reload   # Reload configuration
+sudo ./scripts/uproxy-clientctl.sh status   # Check service status
+sudo ./scripts/uproxy-clientctl.sh health   # Check client health
+sudo ./scripts/uproxy-clientctl.sh logs     # View logs
+sudo ./scripts/uproxy-clientctl.sh tail     # Follow logs in real-time
+```
+
+**Configuration:** Edit the scripts to customize:
+- Binary paths and architecture (amd64/arm64)
+- Listen addresses and ports
+- Server endpoints
+- KCP parameters
+- Timeouts and buffer sizes
+
+---
+
 ## ⚙️ Configuration & Tuning
 
 Both the Client and Server share perfectly symmetrical CLI flags, allowing you to tune the proxy for different environments.
