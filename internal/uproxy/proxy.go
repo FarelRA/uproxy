@@ -3,10 +3,10 @@ package uproxy
 import (
 	"context"
 	"io"
+	"log/slog"
 	"net"
 	"sync"
 	"time"
-	"log/slog"
 
 	"golang.org/x/sync/errgroup"
 )
@@ -22,7 +22,7 @@ var bufferPool = sync.Pool{
 	},
 }
 
-// ProxyBidi establishes a highly-optimized, zero-copy bidirectional data pipe 
+// ProxyBidi establishes a highly-optimized, zero-copy bidirectional data pipe
 // between two connections (e.g., an SSH channel and a raw TCP/UDP socket).
 // It blocks until both sides of the connection are completely closed, and records rich telemetry.
 func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string) error {
@@ -40,10 +40,10 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 	g.Go(func() error {
 		bufPtr := bufferPool.Get().(*[]byte)
 		defer bufferPool.Put(bufPtr)
-		
+
 		n, err := io.CopyBuffer(a, b, *bufPtr)
 		txBytes = n
-		
+
 		_ = a.Close()
 		return err
 	})
@@ -52,23 +52,23 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 	g.Go(func() error {
 		bufPtr := bufferPool.Get().(*[]byte)
 		defer bufferPool.Put(bufPtr)
-		
+
 		n, err := io.CopyBuffer(b, a, *bufPtr)
 		rxBytes = n
-		
+
 		_ = b.Close()
 		return err
 	})
 
 	err := g.Wait()
 	duration := time.Since(start)
-	
-	slog.Info("Stream closed", 
-		"layer", "proxy", 
-		"role", role, 
-		"target", target, 
-		"tx_bytes", txBytes, 
-		"rx_bytes", rxBytes, 
+
+	slog.Info("Stream closed",
+		"layer", "proxy",
+		"role", role,
+		"target", target,
+		"tx_bytes", txBytes,
+		"rx_bytes", rxBytes,
 		"duration", duration.String(),
 		"error", err,
 	)
@@ -76,7 +76,7 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 	return err
 }
 
-// OptimizeTCPConn rigorously disables Nagle's Algorithm (SetNoDelay=true). 
+// OptimizeTCPConn rigorously disables Nagle's Algorithm (SetNoDelay=true).
 func OptimizeTCPConn(conn net.Conn) {
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		if err := tcpConn.SetNoDelay(true); err != nil {

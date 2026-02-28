@@ -57,9 +57,6 @@ func NewEntropy() io.Reader {
 }
 
 // SetEntropy sets the global entropy source used by fillRand.
-func SetEntropy(r io.Reader) {
-	entropy = r
-}
 
 // fillRand fills p with random data from the global entropy source.
 func fillRand(p []byte) {

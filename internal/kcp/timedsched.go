@@ -62,16 +62,13 @@ type TimedSched struct {
 
 	// tasks will be distributed through chTask
 	chTask chan timedFunc
-
-	dieOnce sync.Once
-	die     chan struct{}
 }
 
 // NewTimedSched creates a parallel-scheduler with given parallelization
 func NewTimedSched(parallel int) *TimedSched {
 	ts := new(TimedSched)
 	ts.chTask = make(chan timedFunc)
-	ts.die = make(chan struct{})
+
 	ts.chPrependNotify = make(chan struct{}, 1)
 
 	for range parallel {
@@ -116,8 +113,7 @@ func (ts *TimedSched) sched() {
 					break
 				}
 			}
-		case <-ts.die:
-			return
+
 		}
 	}
 }
@@ -137,13 +133,11 @@ func (ts *TimedSched) prepend() {
 				select {
 				case ts.chTask <- tasks[k]:
 					tasks[k] = timedFunc{} // clear to avoid memory leak
-				case <-ts.die:
-					return
+
 				}
 			}
 			tasks = tasks[:0]
-		case <-ts.die:
-			return
+
 		}
 	}
 }
@@ -159,6 +153,3 @@ func (ts *TimedSched) Put(f func(), deadline time.Time) {
 	default:
 	}
 }
-
-// Close terminates this scheduler
-func (ts *TimedSched) Close() { ts.dieOnce.Do(func() { close(ts.die) }) }

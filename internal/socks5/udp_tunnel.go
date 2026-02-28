@@ -5,11 +5,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
 	"time"
-	"log/slog"
 
 	"golang.org/x/crypto/ssh"
 
@@ -30,17 +30,23 @@ func parseSOCKS5UDPHeader(data []byte) (target string, payload []byte, header []
 
 	switch atyp {
 	case 1:
-		if len(data) < idx+4+2 { return "", nil, nil, io.ErrUnexpectedEOF }
+		if len(data) < idx+4+2 {
+			return "", nil, nil, io.ErrUnexpectedEOF
+		}
 		host = net.IP(data[idx : idx+4]).String()
 		idx += 4
 	case 3:
 		l := int(data[idx])
 		idx++
-		if len(data) < idx+l+2 { return "", nil, nil, io.ErrUnexpectedEOF }
+		if len(data) < idx+l+2 {
+			return "", nil, nil, io.ErrUnexpectedEOF
+		}
 		host = string(data[idx : idx+l])
 		idx += l
 	case 4:
-		if len(data) < idx+16+2 { return "", nil, nil, io.ErrUnexpectedEOF }
+		if len(data) < idx+16+2 {
+			return "", nil, nil, io.ErrUnexpectedEOF
+		}
 		host = net.IP(data[idx : idx+16]).String()
 		idx += 16
 	default:
@@ -79,15 +85,19 @@ func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error
 			if err != nil {
 				return
 			}
-			
+
 			mu.Lock()
 			clientAddr = addr
 			mu.Unlock()
 
-			if n < 4 { continue }
-			
+			if n < 4 {
+				continue
+			}
+
 			targetStr, payload, header, err := parseSOCKS5UDPHeader(buf[:n])
-			if err != nil { continue }
+			if err != nil {
+				continue
+			}
 
 			mu.Lock()
 			channel, exists := sessions[targetStr]
@@ -104,7 +114,7 @@ func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error
 					ch.Close()
 					continue
 				}
-				
+
 				slog.Info("UDP Stream started", "layer", "socks5_udp", "role", "client", "target", targetStr)
 
 				mu.Lock()
@@ -125,8 +135,10 @@ func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error
 
 					for {
 						data, err := ReadFramed(ch)
-						if err != nil { return }
-						
+						if err != nil {
+							return
+						}
+
 						rxBytes += int64(len(data))
 
 						pkt := make([]byte, 0, len(hdr)+len(data))
@@ -195,7 +207,9 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 	go func() {
 		for {
 			data, err := ReadFramed(channel)
-			if err != nil { return }
+			if err != nil {
+				return
+			}
 			n, _ := conn.Write(data)
 			txBytes += int64(n)
 			conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
@@ -207,9 +221,13 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 	for {
 		conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		n, err := conn.Read(buf)
-		if err != nil { return }
+		if err != nil {
+			return
+		}
 
-		if err := WriteFramed(channel, buf[:n]); err != nil { return }
+		if err := WriteFramed(channel, buf[:n]); err != nil {
+			return
+		}
 		rxBytes += int64(n)
 	}
 }

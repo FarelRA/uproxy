@@ -5,9 +5,9 @@ import (
 	"time"
 )
 
-// IdleTimeoutConn wraps a standard net.Conn and automatically extends its 
+// IdleTimeoutConn wraps a standard net.Conn and automatically extends its
 // Read and Write deadlines upon every successful IO operation. This implements
-// a rolling idle timeout, ensuring inactive connections are forcefully closed 
+// a rolling idle timeout, ensuring inactive connections are forcefully closed
 // without terminating actively used long-lived connections.
 type IdleTimeoutConn struct {
 	net.Conn

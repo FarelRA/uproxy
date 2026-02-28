@@ -5,9 +5,9 @@ import (
 	"encoding/binary"
 	"io"
 	"log/slog"
-	"uninteruptableproxy/internal/uproxy"
 	"net"
 	"strconv"
+	"uninteruptableproxy/internal/uproxy"
 )
 
 // ServeSOCKS5 binds the local listening port and dispatches SOCKS5 requests

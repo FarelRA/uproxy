@@ -140,7 +140,7 @@ func (r *ResilientPacketConn) reconnectSync() {
 					r.mu.Lock()
 					r.conn = conn
 					r.mu.Unlock()
-					
+
 					atomic.AddInt64(&r.rebinds, 1)
 					slog.Info("Successfully bound resilient UDP socket", "layer", "resilient", "addr", udpAddr.String())
 					return
@@ -207,18 +207,22 @@ func (r *ResilientPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error
 		r.triggerReconnect()
 		return len(p), nil
 	}
-	
+
 	atomic.AddInt64(&r.txBytes, int64(n))
 	atomic.AddInt64(&r.txPackets, 1)
 	return n, nil
 }
 
 func (r *ResilientPacketConn) SetReadBuffer(bytes int) error {
-	if c := r.getConn(); c != nil { return c.SetReadBuffer(bytes) }
+	if c := r.getConn(); c != nil {
+		return c.SetReadBuffer(bytes)
+	}
 	return nil
 }
 func (r *ResilientPacketConn) SetWriteBuffer(bytes int) error {
-	if c := r.getConn(); c != nil { return c.SetWriteBuffer(bytes) }
+	if c := r.getConn(); c != nil {
+		return c.SetWriteBuffer(bytes)
+	}
 	return nil
 }
 func (r *ResilientPacketConn) isClosed() bool {
@@ -229,24 +233,36 @@ func (r *ResilientPacketConn) isClosed() bool {
 func (r *ResilientPacketConn) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed { return nil }
+	if r.closed {
+		return nil
+	}
 	r.closed = true
-	if r.conn != nil { return r.conn.Close() }
+	if r.conn != nil {
+		return r.conn.Close()
+	}
 	return nil
 }
 func (r *ResilientPacketConn) LocalAddr() net.Addr {
-	if c := r.getConn(); c != nil { return c.LocalAddr() }
+	if c := r.getConn(); c != nil {
+		return c.LocalAddr()
+	}
 	return &net.UDPAddr{}
 }
 func (r *ResilientPacketConn) SetDeadline(t time.Time) error {
-	if c := r.getConn(); c != nil { return c.SetDeadline(t) }
+	if c := r.getConn(); c != nil {
+		return c.SetDeadline(t)
+	}
 	return nil
 }
 func (r *ResilientPacketConn) SetReadDeadline(t time.Time) error {
-	if c := r.getConn(); c != nil { return c.SetReadDeadline(t) }
+	if c := r.getConn(); c != nil {
+		return c.SetReadDeadline(t)
+	}
 	return nil
 }
 func (r *ResilientPacketConn) SetWriteDeadline(t time.Time) error {
-	if c := r.getConn(); c != nil { return c.SetWriteDeadline(t) }
+	if c := r.getConn(); c != nil {
+		return c.SetWriteDeadline(t)
+	}
 	return nil
 }

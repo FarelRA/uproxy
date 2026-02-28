@@ -8,9 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"log/slog"
+
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
-	"log/slog"
 )
 
 // LoadPrivateKey attempts to load the SSH client identity file.
@@ -55,7 +56,7 @@ func CheckAuthorizedKeys(pubKey ssh.PublicKey) error {
 	if err != nil {
 		return fmt.Errorf("failed to get user home directory: %w", err)
 	}
-	
+
 	authFile := filepath.Join(home, ".ssh", "authorized_keys")
 	b, err := os.ReadFile(authFile)
 	if err != nil {

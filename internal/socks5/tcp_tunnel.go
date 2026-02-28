@@ -40,7 +40,7 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 	defer targetConn.Close()
 
 	uproxy.OptimizeTCPConn(targetConn)
-	
+
 	// Proxy bidirectionally with zero-copy pools and full telemetry
 	uproxy.ProxyBidi(ctx, uproxy.NewChannelConn(channel, targetConn.LocalAddr(), remoteAddr), targetConn, "socks5_server_tcp", targetAddr)
 }
