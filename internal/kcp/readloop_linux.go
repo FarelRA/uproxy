@@ -47,11 +47,11 @@ func (s *UDPSession) readLoop() {
 	// x/net version
 	var src *net.UDPAddr
 	var srcStr string
-	if s.remote != nil {
-		if udp, ok := s.remote.(*net.UDPAddr); ok {
+	if s.remote.Load() != nil {
+		if udp, ok := s.remote.Load().(*net.UDPAddr); ok {
 			src = udp
 		} else {
-			srcStr = s.remote.String()
+			srcStr = s.remote.Load().(net.Addr).String()
 		}
 	}
 	msgs := make([]ipv4.Message, batchSize)

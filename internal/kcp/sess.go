@@ -132,7 +132,7 @@ type (
 		fecEncoder *fecEncoder
 
 		// settings
-		remote     net.Addr     // remote peer address
+		remote     atomic.Value // remote peer address
 		rd         atomic.Value // read deadline
 		wd         atomic.Value // write deadline
 		headerSize int          // the header size additional to a KCP frame
@@ -194,7 +194,7 @@ func newUDPSession(conv uint32, dataShards, parityShards int, l *Listener, conn 
 	sess.chSocketReadError = make(chan struct{})
 	sess.chSocketWriteError = make(chan struct{})
 	sess.chPostProcessing = make(chan sendRequest, devBacklog)
-	sess.remote = remote
+	sess.remote.Store(remote)
 	sess.conn = conn
 	sess.ownConn = ownConn
 	sess.l = l
@@ -446,7 +446,7 @@ func (s *UDPSession) Close() error {
 	s.mu.Unlock()
 
 	if s.l != nil { // belongs to listener
-		s.l.closeSession(s.remote)
+		s.l.closeSession(s.RemoteAddr())
 		return nil
 	}
 
@@ -461,7 +461,7 @@ func (s *UDPSession) Close() error {
 func (s *UDPSession) LocalAddr() net.Addr { return s.conn.LocalAddr() }
 
 // RemoteAddr returns the remote network address. The Addr returned is shared by all invocations of RemoteAddr, so do not modify it.
-func (s *UDPSession) RemoteAddr() net.Addr { return s.remote }
+func (s *UDPSession) RemoteAddr() net.Addr { return s.remote.Load().(net.Addr) }
 
 // SetDeadline sets the deadline associated with the listener. A zero time value disables the deadline.
 func (s *UDPSession) SetDeadline(t time.Time) error {
@@ -708,7 +708,7 @@ func (s *UDPSession) postProcess() {
 
 			// 3. TxQueue
 			var msg ipv4.Message
-			msg.Addr = s.remote
+			msg.Addr = s.RemoteAddr()
 
 			// original copy, move buf to txqueue directly
 			msg.Buffers = [][]byte{buf}
@@ -1081,9 +1081,10 @@ type (
 		conn         net.PacketConn // the underlying packet connection
 		ownConn      bool           // true if we created conn internally, false if provided by caller
 
-		sessions    map[string]*UDPSession // all sessions accepted by this Listener
-		sessionLock sync.RWMutex
-		chAccepts   chan *UDPSession // Listen() backlog
+		sessions       map[string]*UDPSession // all sessions accepted by this Listener
+		sessionsByConv map[uint32]*UDPSession // sessions mapped by conversation id (for IP roaming)
+		sessionLock    sync.RWMutex
+		chAccepts      chan *UDPSession // Listen() backlog
 
 		die     chan struct{} // notify the listener has closed
 		dieOnce sync.Once
@@ -1195,6 +1196,24 @@ func (l *Listener) packetInput(data []byte, addr net.Addr) {
 		// Close will remove the session from listener's session map,
 		// So we can create a new session with the same addr below.
 		s.Close()
+	} else if hasConv {
+		// Try to find the session by conversation ID (IP roaming / NAT rebinding)
+		l.sessionLock.RLock()
+		sConv, ok := l.sessionsByConv[conv]
+		l.sessionLock.RUnlock()
+
+		if ok && sConv != nil {
+			l.sessionLock.Lock()
+			// Update the session's address mapping
+			delete(l.sessions, sConv.RemoteAddr().String())
+			sConv.remote.Store(addr)
+			l.sessions[addr.String()] = sConv
+			l.sessionLock.Unlock()
+
+			// Feed the data into the found session
+			sConv.kcpInput(data)
+			return
+		}
 	}
 
 	// The connection does not exist, try to create a new one.
@@ -1214,6 +1233,7 @@ func (l *Listener) packetInput(data []byte, addr net.Addr) {
 	s.kcpInput(data)
 	l.sessionLock.Lock()
 	l.sessions[addr.String()] = s
+	l.sessionsByConv[conv] = s
 	l.sessionLock.Unlock()
 	l.chAccepts <- s
 }
@@ -1357,8 +1377,11 @@ func (l *Listener) closeSession(remote net.Addr) (ret bool) {
 	l.sessionLock.Lock()
 	defer l.sessionLock.Unlock()
 
-	if _, ok := l.sessions[remote.String()]; ok {
+	if s, ok := l.sessions[remote.String()]; ok {
 		delete(l.sessions, remote.String())
+		if s != nil && s.kcp != nil {
+			delete(l.sessionsByConv, s.kcp.conv)
+		}
 		return true
 	}
 	return false
@@ -1405,6 +1428,7 @@ func serveConn(block BlockCrypt, dataShards, parityShards int, conn net.PacketCo
 	l.conn = conn
 	l.ownConn = ownConn
 	l.sessions = make(map[string]*UDPSession)
+	l.sessionsByConv = make(map[uint32]*UDPSession)
 	l.chAccepts = make(chan *UDPSession, acceptBacklog)
 	l.die = make(chan struct{})
 	l.dataShards = dataShards
