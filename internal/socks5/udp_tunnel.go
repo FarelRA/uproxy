@@ -79,7 +79,9 @@ func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error
 		var mu sync.Mutex
 		var clientAddr *net.UDPAddr
 
-		buf := make([]byte, 65535)
+		bufPtr := getUDPBuffer()
+		defer putUDPBuffer(bufPtr)
+		buf := *bufPtr
 		for {
 			n, addr, err := conn.ReadFromUDP(buf)
 			if err != nil {
@@ -217,7 +219,9 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 	}()
 
 	// Internet -> SSH (RX)
-	buf := make([]byte, 65535)
+	bufPtr := getUDPBuffer()
+	defer putUDPBuffer(bufPtr)
+	buf := *bufPtr
 	for {
 		conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		n, err := conn.Read(buf)

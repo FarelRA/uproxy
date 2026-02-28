@@ -42,8 +42,8 @@ func handleSOCKS5Client(conn net.Conn, dialTCP func(string) (net.Conn, error), d
 	clientAddr := conn.RemoteAddr().String()
 
 	// 1. Version identifier/method selection message
-	buf := make([]byte, 2)
-	if _, err := io.ReadFull(conn, buf); err != nil || buf[0] != 0x05 {
+	var buf [2]byte
+	if _, err := io.ReadFull(conn, buf[:]); err != nil || buf[0] != 0x05 {
 		return
 	}
 	methods := make([]byte, buf[1])
@@ -54,8 +54,8 @@ func handleSOCKS5Client(conn net.Conn, dialTCP func(string) (net.Conn, error), d
 	conn.Write([]byte{0x05, 0x00})
 
 	// 2. Request message
-	req := make([]byte, 4)
-	if _, err := io.ReadFull(conn, req); err != nil || req[0] != 0x05 {
+	var req [4]byte
+	if _, err := io.ReadFull(conn, req[:]); err != nil || req[0] != 0x05 {
 		return
 	}
 	cmd := req[1]
@@ -64,26 +64,26 @@ func handleSOCKS5Client(conn net.Conn, dialTCP func(string) (net.Conn, error), d
 	var host string
 	switch atyp {
 	case 1: // IPv4
-		ip := make([]byte, 4)
-		io.ReadFull(conn, ip)
-		host = net.IP(ip).String()
+		var ip [4]byte
+		io.ReadFull(conn, ip[:])
+		host = net.IP(ip[:]).String()
 	case 3: // Domain name
-		l := make([]byte, 1)
-		io.ReadFull(conn, l)
+		var l [1]byte
+		io.ReadFull(conn, l[:])
 		domain := make([]byte, l[0])
 		io.ReadFull(conn, domain)
 		host = string(domain)
 	case 4: // IPv6
-		ip := make([]byte, 16)
-		io.ReadFull(conn, ip)
-		host = net.IP(ip).String()
+		var ip [16]byte
+		io.ReadFull(conn, ip[:])
+		host = net.IP(ip[:]).String()
 	default:
 		return
 	}
 
-	portBuf := make([]byte, 2)
-	io.ReadFull(conn, portBuf)
-	port := binary.BigEndian.Uint16(portBuf)
+	var portBuf [2]byte
+	io.ReadFull(conn, portBuf[:])
+	port := binary.BigEndian.Uint16(portBuf[:])
 	targetAddr := net.JoinHostPort(host, strconv.Itoa(int(port)))
 
 	// 3. Dispatch based on command
