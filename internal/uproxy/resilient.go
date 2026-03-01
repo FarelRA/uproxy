@@ -18,6 +18,7 @@ type ResilientPacketConn struct {
 	reconnecting bool
 	reconnectInt time.Duration
 	sockBuf      int
+	serverMode   bool // If true, disables connectivity monitoring (for server listening sockets)
 
 	// Telemetry
 	txBytes   int64
@@ -32,7 +33,7 @@ type ResilientPacketConn struct {
 	lastTxTime atomic.Value // time.Time
 }
 
-func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Duration, sockBuf int) *ResilientPacketConn {
+func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Duration, sockBuf int, serverMode bool) *ResilientPacketConn {
 	if reconnectInterval == 0 {
 		reconnectInterval = 1 * time.Second
 	}
@@ -41,6 +42,7 @@ func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Durat
 		iface:        iface,
 		reconnectInt: reconnectInterval,
 		sockBuf:      sockBuf,
+		serverMode:   serverMode,
 	}
 
 	// Initialize activity times
@@ -50,9 +52,14 @@ func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Durat
 
 	r.reconnectSync()
 
-	// Spin up telemetry logger and connectivity monitor
+	// Spin up telemetry logger
 	go r.telemetryLoop()
-	go r.connectivityMonitor()
+
+	// Only run connectivity monitor for client mode
+	// Server doesn't need to rebind when clients die - clients reconnect instead
+	if !serverMode {
+		go r.connectivityMonitor()
+	}
 
 	return r
 }

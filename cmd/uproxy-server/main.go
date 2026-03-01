@@ -128,7 +128,7 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 	}
 	config.AddHostKey(signer)
 
-	packetConn := uproxy.NewResilientPacketConn(listenAddr, "", reconnectInterval, udpSockBuf)
+	packetConn := uproxy.NewResilientPacketConn(listenAddr, "", reconnectInterval, udpSockBuf, true) // serverMode=true: no connectivity monitoring
 	var activeClientsMu sync.Mutex
 	activeClients := make(map[*ssh.ServerConn]struct{})
 

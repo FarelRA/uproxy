@@ -175,7 +175,7 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 			}
 
 			slog.Info("Dialing server", "addr", serverAddr)
-			packetConn := uproxy.NewResilientPacketConn("", "", reconnectInterval, udpSockBuf)
+			packetConn := uproxy.NewResilientPacketConn("", "", reconnectInterval, udpSockBuf, false) // serverMode=false: enable connectivity monitoring
 			kcpConn, err := kcp.NewConn(serverAddr, packetConn)
 			if err != nil {
 				slog.Error("Dial KCP failed, retrying in 3s...", "error", err)
