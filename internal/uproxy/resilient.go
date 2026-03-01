@@ -5,17 +5,17 @@ import (
 	"log/slog"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"uproxy/internal/network"
+	"uproxy/internal/telemetry"
 )
 
 // FailureHandler is called when a connectivity failure is detected
 // It receives the diagnostic result and should return true if it handled the failure
 type FailureHandler func(result network.DiagnosticResult) bool
 
-// ResilientPacketConn is a custom UDP wrapper that silently swallows kernel-level errors.
+// ResilientPacketConn is a UDP wrapper that automatically reconnects on errors
 type ResilientPacketConn struct {
 	mu           sync.RWMutex
 	conn         *net.UDPConn
@@ -31,17 +31,9 @@ type ResilientPacketConn struct {
 	diagnostics    *network.Diagnostics
 	failureHandler FailureHandler
 
-	// Telemetry
-	txBytes   int64
-	rxBytes   int64
-	txPackets int64
-	rxPackets int64
-	drops     int64
-	rebinds   int64
-
-	// Connectivity monitoring
-	lastRxTime atomic.Value // time.Time
-	lastTxTime atomic.Value // time.Time
+	// Extracted components
+	telemetry *telemetry.ConnTelemetry
+	monitor   *telemetry.ConnectivityMonitor
 }
 
 func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Duration, sockBuf int, serverMode bool) *ResilientPacketConn {
@@ -54,22 +46,15 @@ func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Durat
 		reconnectInt: reconnectInterval,
 		sockBuf:      sockBuf,
 		serverMode:   serverMode,
+		telemetry:    telemetry.NewConnTelemetry("resilient", 30*time.Second),
 	}
 
-	// Initialize activity times
-	now := time.Now()
-	r.lastRxTime.Store(now)
-	r.lastTxTime.Store(now)
-
 	r.reconnectSync()
-
-	// Spin up telemetry logger
-	go r.telemetryLoop()
 
 	// Only run connectivity monitor for client mode
 	// Server doesn't need to rebind when clients die - clients reconnect instead
 	if !serverMode {
-		go r.connectivityMonitor()
+		r.monitor = telemetry.NewConnectivityMonitor(r.triggerReconnect)
 	}
 
 	return r
@@ -84,103 +69,6 @@ func (r *ResilientPacketConn) SetFailureHandler(serverAddr string, handler Failu
 	r.failureHandler = handler
 }
 
-func (r *ResilientPacketConn) telemetryLoop() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	var lastTx, lastRx int64
-
-	for range ticker.C {
-		r.mu.RLock()
-		closed := r.closed
-		r.mu.RUnlock()
-		if closed {
-			return
-		}
-
-		tx := atomic.LoadInt64(&r.txBytes)
-		rx := atomic.LoadInt64(&r.rxBytes)
-		txP := atomic.LoadInt64(&r.txPackets)
-		rxP := atomic.LoadInt64(&r.rxPackets)
-		drops := atomic.LoadInt64(&r.drops)
-		rebinds := atomic.LoadInt64(&r.rebinds)
-
-		// Only log if traffic occurred in the last 30s
-		if tx != lastTx || rx != lastRx || drops > 0 || rebinds > 0 {
-			slog.Info("Transport Telemetry (30s interval)",
-				"layer", "resilient",
-				"tx_bytes", tx,
-				"rx_bytes", rx,
-				"tx_pkts", txP,
-				"rx_pkts", rxP,
-				"drops", drops,
-				"rebinds", rebinds,
-			)
-			lastTx = tx
-			lastRx = rx
-		}
-	}
-}
-
-// connectivityMonitor monitors packet activity and detects connectivity issues
-func (r *ResilientPacketConn) connectivityMonitor() {
-	const (
-		checkInterval     = 250 * time.Millisecond // How often to check connectivity
-		idleTimeout       = 30 * time.Second       // Max time without RX packets before considering connection dead
-		asymmetricTimeout = 500 * time.Millisecond // Max time with TX but no RX (ISP down, firewall, etc.)
-	)
-
-	ticker := time.NewTicker(checkInterval)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		r.mu.RLock()
-		closed := r.closed
-		r.mu.RUnlock()
-		if closed {
-			return
-		}
-
-		now := time.Now()
-
-		// Get last activity times
-		lastRx, okRx := r.lastRxTime.Load().(time.Time)
-		lastTx, okTx := r.lastTxTime.Load().(time.Time)
-
-		if !okRx || !okTx {
-			continue
-		}
-
-		timeSinceRx := now.Sub(lastRx)
-		timeSinceTx := now.Sub(lastTx)
-
-		// Scenario 1: Complete idle (no TX or RX) - this is normal, no action needed
-		if timeSinceRx > idleTimeout && timeSinceTx > idleTimeout {
-			continue
-		}
-
-		// Scenario 2: Asymmetric traffic - we're sending but not receiving
-		// This indicates: ISP down, firewall blocking, NAT timeout, mobile network issue
-		if timeSinceTx < asymmetricTimeout && timeSinceRx > asymmetricTimeout {
-			slog.Warn("Connectivity issue detected: sending packets but not receiving",
-				"layer", "resilient",
-				"time_since_rx", timeSinceRx.Round(time.Second),
-				"time_since_tx", timeSinceTx.Round(time.Second))
-			r.triggerReconnect()
-			continue
-		}
-
-		// Scenario 3: Long idle on RX but recent TX - potential connection stale
-		if timeSinceTx < checkInterval && timeSinceRx > idleTimeout {
-			slog.Warn("Connectivity issue detected: recent TX but no RX for extended period",
-				"layer", "resilient",
-				"time_since_rx", timeSinceRx.Round(time.Second))
-			r.triggerReconnect()
-			continue
-		}
-	}
-}
-
 func (r *ResilientPacketConn) triggerReconnect() {
 	r.mu.Lock()
 	if r.reconnecting || r.closed {
@@ -192,7 +80,7 @@ func (r *ResilientPacketConn) triggerReconnect() {
 	handler := r.failureHandler
 	r.mu.Unlock()
 
-	atomic.AddInt64(&r.drops, 1)
+	r.telemetry.RecordDrop()
 
 	// Diagnose the failure if diagnostics are available
 	var handled bool
@@ -263,7 +151,7 @@ func (r *ResilientPacketConn) reconnectSync() {
 					r.conn = conn
 					r.mu.Unlock()
 
-					atomic.AddInt64(&r.rebinds, 1)
+					r.telemetry.RecordRebind()
 					slog.Info("Successfully bound resilient UDP socket", "layer", "resilient", "addr", udpAddr.String())
 					return
 				}
@@ -303,9 +191,10 @@ func (r *ResilientPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err erro
 			continue
 		}
 
-		atomic.AddInt64(&r.rxBytes, int64(n))
-		atomic.AddInt64(&r.rxPackets, 1)
-		r.lastRxTime.Store(time.Now())
+		r.telemetry.RecordRx(n)
+		if r.monitor != nil {
+			r.monitor.RecordRx()
+		}
 		return n, addr, nil
 	}
 }
@@ -331,9 +220,10 @@ func (r *ResilientPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error
 		return len(p), nil
 	}
 
-	atomic.AddInt64(&r.txBytes, int64(n))
-	atomic.AddInt64(&r.txPackets, 1)
-	r.lastTxTime.Store(time.Now())
+	r.telemetry.RecordTx(n)
+	if r.monitor != nil {
+		r.monitor.RecordTx()
+	}
 	return n, nil
 }
 
@@ -343,17 +233,20 @@ func (r *ResilientPacketConn) SetReadBuffer(bytes int) error {
 	}
 	return nil
 }
+
 func (r *ResilientPacketConn) SetWriteBuffer(bytes int) error {
 	if c := r.getConn(); c != nil {
 		return c.SetWriteBuffer(bytes)
 	}
 	return nil
 }
+
 func (r *ResilientPacketConn) isClosed() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.closed
 }
+
 func (r *ResilientPacketConn) Close() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -361,29 +254,42 @@ func (r *ResilientPacketConn) Close() error {
 		return nil
 	}
 	r.closed = true
+
+	// Close extracted components
+	if r.telemetry != nil {
+		r.telemetry.Close()
+	}
+	if r.monitor != nil {
+		r.monitor.Close()
+	}
+
 	if r.conn != nil {
 		return r.conn.Close()
 	}
 	return nil
 }
+
 func (r *ResilientPacketConn) LocalAddr() net.Addr {
 	if c := r.getConn(); c != nil {
 		return c.LocalAddr()
 	}
 	return &net.UDPAddr{}
 }
+
 func (r *ResilientPacketConn) SetDeadline(t time.Time) error {
 	if c := r.getConn(); c != nil {
 		return c.SetDeadline(t)
 	}
 	return nil
 }
+
 func (r *ResilientPacketConn) SetReadDeadline(t time.Time) error {
 	if c := r.getConn(); c != nil {
 		return c.SetReadDeadline(t)
 	}
 	return nil
 }
+
 func (r *ResilientPacketConn) SetWriteDeadline(t time.Time) error {
 	if c := r.getConn(); c != nil {
 		return c.SetWriteDeadline(t)
