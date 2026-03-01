@@ -98,9 +98,9 @@ func (r *ResilientPacketConn) telemetryLoop() {
 // connectivityMonitor monitors packet activity and detects connectivity issues
 func (r *ResilientPacketConn) connectivityMonitor() {
 	const (
-		checkInterval     = 5 * time.Second  // How often to check connectivity
-		idleTimeout       = 30 * time.Second // Max time without RX packets before considering connection dead
-		asymmetricTimeout = 20 * time.Second // Max time with TX but no RX (ISP down, firewall, etc.)
+		checkInterval     = 250 * time.Millisecond // How often to check connectivity
+		idleTimeout       = 30 * time.Second       // Max time without RX packets before considering connection dead
+		asymmetricTimeout = 500 * time.Millisecond // Max time with TX but no RX (ISP down, firewall, etc.)
 	)
 
 	ticker := time.NewTicker(checkInterval)
