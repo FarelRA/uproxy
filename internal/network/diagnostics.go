@@ -1,3 +1,6 @@
+// Package network provides network diagnostics and connectivity monitoring utilities.
+// It includes functionality for diagnosing connection failures, detecting network changes,
+// and resolving IP addresses.
 package network
 
 import (

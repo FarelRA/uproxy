@@ -3,7 +3,6 @@ package socks5
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"time"
 

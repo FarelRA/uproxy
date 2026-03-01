@@ -3,7 +3,6 @@ package socks5
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"net"
 	"strconv"

@@ -1,3 +1,6 @@
+// Package config provides configuration structures and default values for uproxy.
+// It includes client and server configuration options, KCP parameters, and
+// shared constants used throughout the application.
 package config
 
 import (

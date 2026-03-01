@@ -1,3 +1,6 @@
+// Package routing provides utilities for parsing and managing system routing tables.
+// It supports parsing route information from platform-specific commands and
+// extracting gateway and interface details.
 package routing
 
 import (

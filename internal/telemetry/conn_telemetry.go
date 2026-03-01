@@ -1,3 +1,6 @@
+// Package telemetry provides connection-level metrics tracking and monitoring.
+// It tracks bytes transferred, packet counts, connection drops, and rebind events
+// for network connections.
 package telemetry
 
 import (
