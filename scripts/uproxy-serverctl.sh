@@ -13,6 +13,13 @@
 #   EXTRA_FLAGS         - Additional flags to pass to uproxy-server
 #   SERVER_PUBLIC_ADDR  - Public address for server (optional)
 #
+#   TUN Mode (requires root):
+#   TUN_IP              - TUN interface IPv4 address (e.g., 10.0.0.1)
+#   TUN_IPV6            - TUN interface IPv6 address with prefix (e.g., fd00::1/64)
+#   TUN_NETMASK         - TUN interface netmask (default: 255.255.255.0)
+#   TUN_NAME            - TUN device name (default: utun0)
+#   TUN_MTU             - TUN interface MTU (default: 1400)
+#
 
 set -euo pipefail
 
@@ -107,6 +114,27 @@ build_args() {
     # Public address (optional)
     if [[ -n "${SERVER_PUBLIC_ADDR:-}" ]]; then
         args+=(--public-addr "$SERVER_PUBLIC_ADDR")
+    fi
+    
+    # TUN mode parameters (requires root)
+    if [[ -n "${TUN_IP:-}" ]]; then
+        args+=(--tun-ip "$TUN_IP")
+    fi
+    
+    if [[ -n "${TUN_IPV6:-}" ]]; then
+        args+=(--tun-ipv6 "$TUN_IPV6")
+    fi
+    
+    if [[ -n "${TUN_NETMASK:-}" ]]; then
+        args+=(--tun-netmask "$TUN_NETMASK")
+    fi
+    
+    if [[ -n "${TUN_NAME:-}" ]]; then
+        args+=(--tun-name "$TUN_NAME")
+    fi
+    
+    if [[ -n "${TUN_MTU:-}" ]]; then
+        args+=(--tun-mtu "$TUN_MTU")
     fi
     
     # Extra flags

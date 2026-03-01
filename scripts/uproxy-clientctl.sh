@@ -6,7 +6,14 @@
 #
 # Environment variables:
 #   SERVER              - Remote server address (REQUIRED, e.g., 203.0.113.50:6000)
+#   MODE                - Operating mode: auto|socks5|tun (default: auto, uses socks5 unless TUN_IP is set)
 #   LISTEN              - Local SOCKS5 listen address (default: 127.0.0.1:1080)
+#   TUN_IP              - TUN interface IPv4 address (e.g., 10.0.0.2, enables TUN mode when set)
+#   TUN_IPV6            - TUN interface IPv6 address with prefix (e.g., fd00::2/64)
+#   TUN_NAME            - TUN device name (default: utun0)
+#   TUN_NETMASK         - TUN interface netmask (default: 255.255.255.0)
+#   TUN_MTU             - TUN interface MTU (default: 1400)
+#   TUN_ROUTES          - Comma-separated routes to add (e.g., 0.0.0.0/0,::/0)
 #   LOG_LEVEL           - Log level: debug|info|warn|error (default: info)
 #   LOG_FORMAT          - Log format: console|json (default: console)
 #   IDLE_TIMEOUT        - Idle timeout duration (default: 1h)
@@ -105,8 +112,32 @@ build_args() {
     fi
     args+=(--server "$SERVER")
     
-    # Listen address
-    args+=(--listen "${LISTEN:-127.0.0.1:1080}")
+    # Mode selection: if TUN_IP is set, use TUN mode; otherwise force SOCKS5
+    if [[ -n "${TUN_IP:-}" ]]; then
+        # TUN mode - TUN_IP is required
+        args+=(--mode "${MODE:-tun}")
+        args+=(--tun-ip "$TUN_IP")
+        
+        # Optional TUN parameters
+        if [[ -n "${TUN_IPV6:-}" ]]; then
+            args+=(--tun-ipv6 "$TUN_IPV6")
+        fi
+        args+=(--tun-name "${TUN_NAME:-utun0}")
+        args+=(--tun-netmask "${TUN_NETMASK:-255.255.255.0}")
+        args+=(--tun-mtu "${TUN_MTU:-1400}")
+        if [[ -n "${TUN_ROUTES:-}" ]]; then
+            args+=(--tun-routes "$TUN_ROUTES")
+        fi
+        
+        # Listen address is optional for TUN mode but can be used for fallback
+        if [[ -n "${LISTEN:-}" ]]; then
+            args+=(--listen "$LISTEN")
+        fi
+    else
+        # SOCKS5 mode - force it to prevent auto-selection when running as root
+        args+=(--mode socks5)
+        args+=(--listen "${LISTEN:-127.0.0.1:1080}")
+    fi
     
     # Log level
     args+=(--log-level "${LOG_LEVEL:-info}")
@@ -383,7 +414,14 @@ Commands:
 
 Environment Variables:
     SERVER              Remote server address (REQUIRED, e.g., 203.0.113.50:6000)
+    MODE                Operating mode: auto|socks5|tun (default: auto, uses socks5 unless TUN_IP is set)
     LISTEN              Local SOCKS5 listen address (default: 127.0.0.1:1080)
+    TUN_IP              TUN interface IPv4 address (e.g., 10.0.0.2, enables TUN mode when set)
+    TUN_IPV6            TUN interface IPv6 address with prefix (e.g., fd00::2/64)
+    TUN_NAME            TUN device name (default: utun0)
+    TUN_NETMASK         TUN interface netmask (default: 255.255.255.0)
+    TUN_MTU             TUN interface MTU (default: 1400)
+    TUN_ROUTES          Comma-separated routes to add (e.g., 0.0.0.0/0,::/0)
     LOG_LEVEL           Log level: debug|info|warn|error (default: info)
     LOG_FORMAT          Log format: console|json (default: console)
     IDLE_TIMEOUT        Idle timeout duration (default: 1h)
@@ -401,8 +439,14 @@ Environment Variables:
     EXTRA_FLAGS         Additional flags to pass to uproxy-client
 
 Examples:
-    # Start with server address
+    # Start in SOCKS5 mode (default when TUN_IP is not set)
     SERVER=203.0.113.50:6000 $0 start
+    
+    # Start in TUN mode (requires root privileges)
+    sudo SERVER=203.0.113.50:6000 TUN_IP=10.0.0.2 $0 start
+    
+    # Start in TUN mode with IPv6 and custom routes
+    sudo SERVER=203.0.113.50:6000 TUN_IP=10.0.0.2 TUN_IPV6=fd00::2/64 TUN_ROUTES=0.0.0.0/0,::/0 $0 start
     
     # Start with custom listen address and debug logging
     SERVER=203.0.113.50:6000 LISTEN=127.0.0.1:8080 LOG_LEVEL=debug $0 start
