@@ -880,7 +880,8 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 
 				kcp.debugLog(IKCP_LOG_OUT_PUSH, "conv", segment.conv, "sn", segment.sn, "frg", segment.frg, "una", segment.una, "ts", segment.ts, "xmit", segment.xmit, "datalen", len(segment.data))
 
-				if segment.xmit >= kcp.dead_link {
+				// Check dead link (0 = disabled)
+				if kcp.dead_link > 0 && segment.xmit >= kcp.dead_link {
 					kcp.state = 0xFFFFFFFF
 				}
 			}

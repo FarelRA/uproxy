@@ -186,7 +186,7 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 
 			kcpConn.SetStreamMode(true)
 			kcpCfg.Apply(kcpConn)
-			kcpConn.SetDeadLink(0) // Disabled: connectivity monitor handles all timeouts
+			kcpConn.SetDeadLink(0) // 0 = disabled, connectivity monitor handles all timeouts
 
 			config := &ssh.ClientConfig{
 				User: "proxy",
