@@ -47,6 +47,17 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 	}
 	defer iface.Close()
 
+	// Set up automatic routing if enabled
+	var routeInfo *RouteInfo
+	if autoRoute {
+		var err error
+		routeInfo, err = SetupClientRoutes(serverAddr, iface.Name())
+		if err != nil {
+			return fmt.Errorf("failed to set up client routes: %w", err)
+		}
+		defer CleanupClientRoutes(routeInfo)
+	}
+
 	// Add routes if specified
 	routeList := ParseRoutes(routes)
 	for _, route := range routeList {
