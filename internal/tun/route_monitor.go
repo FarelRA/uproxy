@@ -21,16 +21,18 @@ type RouteMonitor struct {
 	serverAddr string
 	tunDevice  string
 	routeInfo  *RouteInfo
+	rebindFunc func() // Optional callback to rebind socket on network change
 	ctx        context.Context
 	cancel     context.CancelFunc
 }
 
 // NewRouteMonitor creates a new route monitor
-func NewRouteMonitor(serverAddr, tunDevice string) *RouteMonitor {
+func NewRouteMonitor(serverAddr, tunDevice string, rebindFunc func()) *RouteMonitor {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RouteMonitor{
 		serverAddr: serverAddr,
 		tunDevice:  tunDevice,
+		rebindFunc: rebindFunc,
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -287,6 +289,11 @@ func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, last
 	*lastSrcIP = srcIP
 	*lastIPv6GW = ipv6gw
 	*lastIPv6SrcIP = ipv6src
+
+	// Trigger socket rebind if callback is provided
+	if rm.rebindFunc != nil {
+		rm.rebindFunc()
+	}
 
 	rm.logRoutesConfigured()
 	slog.Info("WAN route changed, routes updated")

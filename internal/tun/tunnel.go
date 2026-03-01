@@ -18,7 +18,7 @@ const (
 )
 
 // ServeTUN starts the TUN tunnel, reading packets from the TUN device and forwarding them through SSH
-func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes string, autoRoute bool, serverAddr string) error {
+func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes string, autoRoute bool, serverAddr string, rebindFunc func()) error {
 	// Open SSH channel first to receive server-assigned IPs
 	sshChan, err := openTUNChannel(sshClient)
 	if err != nil {
@@ -50,7 +50,7 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 	// Set up automatic routing with monitoring if enabled
 	var routeMonitor *RouteMonitor
 	if autoRoute {
-		routeMonitor = NewRouteMonitor(serverAddr, iface.Name())
+		routeMonitor = NewRouteMonitor(serverAddr, iface.Name(), rebindFunc)
 		if err := routeMonitor.Start(); err != nil {
 			return fmt.Errorf("failed to set up client routes: %w", err)
 		}

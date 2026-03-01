@@ -106,6 +106,28 @@ func (r *ResilientPacketConn) triggerReconnect() {
 	}()
 }
 
+// ForceRebind forces the socket to rebind (useful when network changes are detected externally)
+func (r *ResilientPacketConn) ForceRebind() {
+	r.mu.Lock()
+	if r.reconnecting || r.closed {
+		r.mu.Unlock()
+		return
+	}
+	r.reconnecting = true
+	r.mu.Unlock()
+
+	slog.Info("Network change detected, rebinding socket...", "layer", "resilient")
+
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.reconnecting = false
+			r.mu.Unlock()
+		}()
+		r.reconnectSync()
+	}()
+}
+
 func (r *ResilientPacketConn) reconnectSync() {
 	r.mu.Lock()
 	if r.closed {

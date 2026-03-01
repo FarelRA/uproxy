@@ -281,7 +281,15 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 					continue
 				}
 
-				err := tun.ServeTUN(ctx, client, tunCfg, tunRoutes, autoRoute, serverAddr)
+				err := tun.ServeTUN(ctx, client, tunCfg, tunRoutes, autoRoute, serverAddr, func() {
+					// Rebind socket when network changes
+					mu.RLock()
+					pc := currentPacketConn
+					mu.RUnlock()
+					if pc != nil {
+						pc.ForceRebind()
+					}
+				})
 				if err != nil {
 					// Check if server doesn't support TUN mode
 					if strings.Contains(err.Error(), "channel type") && strings.Contains(err.Error(), "not supported") {
