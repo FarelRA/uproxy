@@ -1,12 +1,19 @@
 package uproxy
 
 import (
+	"context"
 	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"uproxy/internal/network"
 )
+
+// FailureHandler is called when a connectivity failure is detected
+// It receives the diagnostic result and should return true if it handled the failure
+type FailureHandler func(result network.DiagnosticResult) bool
 
 // ResilientPacketConn is a custom UDP wrapper that silently swallows kernel-level errors.
 type ResilientPacketConn struct {
@@ -19,6 +26,10 @@ type ResilientPacketConn struct {
 	reconnectInt time.Duration
 	sockBuf      int
 	serverMode   bool // If true, disables connectivity monitoring (for server listening sockets)
+
+	// Failure handling
+	diagnostics    *network.Diagnostics
+	failureHandler FailureHandler
 
 	// Telemetry
 	txBytes   int64
@@ -62,6 +73,15 @@ func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Durat
 	}
 
 	return r
+}
+
+// SetFailureHandler sets a callback for handling connectivity failures
+// The handler receives diagnostic information and can apply specific fixes
+func (r *ResilientPacketConn) SetFailureHandler(serverAddr string, handler FailureHandler) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.diagnostics = network.NewDiagnostics(serverAddr, slog.Default())
+	r.failureHandler = handler
 }
 
 func (r *ResilientPacketConn) telemetryLoop() {
@@ -168,19 +188,47 @@ func (r *ResilientPacketConn) triggerReconnect() {
 		return
 	}
 	r.reconnecting = true
+	diagnostics := r.diagnostics
+	handler := r.failureHandler
 	r.mu.Unlock()
 
 	atomic.AddInt64(&r.drops, 1)
-	slog.Warn("Network interface drop detected. Attempting to rebind socket...", "layer", "resilient")
 
-	go func() {
-		defer func() {
-			r.mu.Lock()
-			r.reconnecting = false
-			r.mu.Unlock()
+	// Diagnose the failure if diagnostics are available
+	var handled bool
+	if diagnostics != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		result := diagnostics.DiagnoseFailure(ctx)
+		cancel()
+
+		slog.Warn("Connectivity failure detected",
+			"layer", "resilient",
+			"failure_type", result.FailureType.String(),
+			"message", result.Message)
+
+		// Let the failure handler attempt to fix the issue
+		if handler != nil {
+			handled = handler(result)
+		}
+	} else {
+		slog.Warn("Network interface drop detected. Attempting to rebind socket...", "layer", "resilient")
+	}
+
+	// If not handled by custom handler, do default rebind
+	if !handled {
+		go func() {
+			defer func() {
+				r.mu.Lock()
+				r.reconnecting = false
+				r.mu.Unlock()
+			}()
+			r.reconnectSync()
 		}()
-		r.reconnectSync()
-	}()
+	} else {
+		r.mu.Lock()
+		r.reconnecting = false
+		r.mu.Unlock()
+	}
 }
 
 func (r *ResilientPacketConn) reconnectSync() {

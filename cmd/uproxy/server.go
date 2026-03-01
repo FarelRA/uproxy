@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 
+	"uproxy/internal/config"
 	"uproxy/internal/kcp"
 	"uproxy/internal/socks5"
 	"uproxy/internal/tun"
@@ -20,84 +21,89 @@ import (
 )
 
 func serverCmd() *cobra.Command {
-	var listenAddr, outbound, logLevel, logFormat string
-	var idleTimeout, proxyDialTimeout, reconnectInterval time.Duration
-	var tcpBufSize, udpSockBuf int
-	var kcpCfg kcp.Config
-
-	// SSH configuration
-	var sshDir, sshPrivateKey, sshAuthorizedKeys string
-
-	// TUN configuration for server side
-	var tunName, tunIP, tunNetmask, tunIPv6 string
-	var tunMTU int
-	var autoRoute *bool
+	cfg := config.NewDefaultServerConfig()
 
 	cmd := &cobra.Command{
 		Use:   "server",
 		Short: "Run uproxy server (KCP+SSH SOCKS5/TUN server)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			uproxy.InitLogger(logLevel, logFormat)
-			uproxy.TCPBufSize = tcpBufSize
+			uproxy.InitLogger(cfg.LogLevel, cfg.LogFormat)
+			uproxy.TCPBufSize = cfg.TCPBufSize
+			config.SetupSSHPaths(&cfg.SSH, true)
 
-			tunCfg := &tun.Config{
-				Name:    tunName,
-				IP:      tunIP,
-				Netmask: tunNetmask,
-				IPv6:    tunIPv6,
-				MTU:     tunMTU,
-			}
-
-			return runServer(listenAddr, outbound, idleTimeout, proxyDialTimeout, reconnectInterval, udpSockBuf, &kcpCfg, tunCfg, sshDir, sshPrivateKey, sshAuthorizedKeys, *autoRoute)
+			return runServer(cmd.Context(), &cfg)
 		},
 	}
 
-	cmd.Flags().StringVarP(&listenAddr, "listen", "l", ":6000", "Listen address")
-	cmd.Flags().StringVarP(&outbound, "outbound", "o", "", "Outbound interface for dialing targets (e.g., tun0)")
-	cmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
-	cmd.Flags().StringVar(&logFormat, "log-format", "console", "Log format (console, json)")
-
-	// SSH configuration flags
-	cmd.Flags().StringVar(&sshDir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
-	cmd.Flags().StringVar(&sshPrivateKey, "ssh-private-key", "", "SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)")
-	cmd.Flags().StringVar(&sshAuthorizedKeys, "ssh-authorized-keys", "", "SSH authorized_keys file (default: ~/.ssh/authorized_keys)")
-
-	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
-	cmd.Flags().DurationVar(&proxyDialTimeout, "proxy-dial-timeout", 5*time.Second, "Timeout for dialing upstream SOCKS5 targets")
-	cmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", 1*time.Second, "Interval to retry binding UDP socket on network drop")
-
-	cmd.Flags().IntVar(&tcpBufSize, "tcp-buf", 32768, "TCP copy buffer size per SOCKS5 stream")
-	cmd.Flags().IntVar(&udpSockBuf, "udp-sockbuf", 4194304, "UDP socket buffer size")
-
-	cmd.Flags().IntVar(&kcpCfg.NoDelay, "kcp-nodelay", 1, "KCP nodelay mode")
-	cmd.Flags().IntVar(&kcpCfg.Interval, "kcp-interval", 10, "KCP timer interval in ms")
-	cmd.Flags().IntVar(&kcpCfg.Resend, "kcp-resend", 2, "KCP fast resend mode")
-	cmd.Flags().IntVar(&kcpCfg.NoCongestionCtrl, "kcp-nc", 1, "KCP disable congestion control")
-	cmd.Flags().IntVar(&kcpCfg.SndWnd, "kcp-sndwnd", 4096, "KCP send window")
-	cmd.Flags().IntVar(&kcpCfg.RcvWnd, "kcp-rcvwnd", 4096, "KCP receive window")
-	cmd.Flags().IntVar(&kcpCfg.MTU, "kcp-mtu", 1350, "KCP MTU")
-
-	// TUN mode flags (server side)
-	cmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name for server")
-	cmd.Flags().StringVar(&tunIP, "tun-ip", "172.27.66.1", "TUN interface IPv4 address for server")
-	cmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask")
-	cmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "fd42:cafe:beef::1/64", "TUN interface IPv6 address with prefix (e.g., fd42:cafe:beef::1/64)")
-	cmd.Flags().IntVar(&tunMTU, "tun-mtu", 1280, "TUN interface MTU")
-	autoRoute = cmd.Flags().Bool("auto-route", true, "Automatically configure NAT and IP forwarding (server) or routing (client)")
-
+	config.AddServerFlags(cmd, &cfg)
 	return cmd
 }
 
-func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, sshDir, sshPrivateKey, sshAuthorizedKeys string, autoRoute bool) error {
-	ctx, cancel := context.WithCancel(context.Background())
+func runServer(ctx context.Context, cfg *config.ServerConfig) error {
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	signer, err := uproxy.LoadPrivateKey(sshDir, sshPrivateKey)
+	// Setup signal handling
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Load SSH host key
+	signer, err := uproxy.LoadPrivateKey(cfg.SSH.Dir, cfg.SSH.PrivateKey)
 	if err != nil {
 		return err
 	}
 
-	config := &ssh.ServerConfig{
+	// Create SSH server config
+	sshConfig := createSSHServerConfig(signer, cfg)
+
+	// Create resilient packet connection
+	packetConn := uproxy.NewResilientPacketConn(
+		cfg.ListenAddr,
+		"",
+		cfg.ReconnectInterval,
+		cfg.UDPSockBuf,
+		true, // server mode - no connectivity monitoring
+	)
+	defer packetConn.Close()
+
+	// Initialize TUN manager if running as root
+	tunManager, err := initializeTUNManager(cfg)
+	if err != nil {
+		slog.Warn("TUN mode disabled", "error", err)
+	}
+	if tunManager != nil {
+		defer tunManager.Close()
+	}
+
+	// Create KCP listener
+	listener, err := kcp.ServeConn(packetConn)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+
+	slog.Info("Listening on KCP", "addr", cfg.ListenAddr)
+
+	// Track active clients for graceful shutdown
+	clientTracker := newClientTracker()
+
+	// Handle shutdown signal
+	go func() {
+		<-sigChan
+		slog.Info("Shutting down...")
+		clientTracker.closeAll()
+		time.Sleep(config.DefaultShutdownGracePeriod)
+		listener.Close()
+		cancel()
+	}()
+
+	// Accept connections
+	return acceptConnections(ctx, listener, cfg, sshConfig, tunManager, clientTracker)
+}
+
+// createSSHServerConfig creates the SSH server configuration
+func createSSHServerConfig(signer ssh.Signer, cfg *config.ServerConfig) *ssh.ServerConfig {
+	sshConfig := &ssh.ServerConfig{
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			slog.Info("Client attempting SSH authentication",
 				"remote_addr", conn.RemoteAddr(),
@@ -105,7 +111,7 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 				"key_type", key.Type(),
 				"fingerprint", ssh.FingerprintSHA256(key))
 
-			if err := uproxy.CheckAuthorizedKeys(key, sshDir, sshAuthorizedKeys); err != nil {
+			if err := uproxy.CheckAuthorizedKeys(key, cfg.SSH.Dir, cfg.SSH.AuthorizedKeys); err != nil {
 				slog.Warn("SSH authentication failed",
 					"remote_addr", conn.RemoteAddr(),
 					"key_type", key.Type(),
@@ -121,61 +127,48 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 			return &ssh.Permissions{}, nil
 		},
 	}
-	config.AddHostKey(signer)
+	sshConfig.AddHostKey(signer)
+	return sshConfig
+}
 
-	packetConn := uproxy.NewResilientPacketConn(listenAddr, "", reconnectInterval, udpSockBuf, true) // serverMode=true: no connectivity monitoring
-	var activeClientsMu sync.Mutex
-	activeClients := make(map[*ssh.ServerConn]struct{})
-
-	// Initialize TUN manager (shared by all clients) - only if running as root
-	var tunManager *tun.TUNManager
+// initializeTUNManager initializes the TUN manager if conditions are met
+func initializeTUNManager(cfg *config.ServerConfig) (*tun.TUNManager, error) {
 	if !uproxy.IsRoot() {
 		slog.Info("TUN mode disabled (not running as root). Only SOCKS5 mode available.")
 		slog.Info("To enable TUN mode, run with: sudo uproxy server ...")
-	} else if tunCfg != nil && tunCfg.IP != "" {
-		tunManager, err = tun.NewTUNManager(tunCfg, outbound, autoRoute)
-		if err != nil {
-			slog.Warn("Failed to initialize TUN manager (TUN mode disabled)", "error", err)
-			tunManager = nil
-		} else {
-			slog.Info("TUN manager initialized (running as root)", "device", tunCfg.Name, "ipv4", tunCfg.IP, "ipv6", tunCfg.IPv6, "auto_route", autoRoute)
-		}
-	} else {
+		return nil, nil
+	}
+
+	if cfg.TUN.IP == "" {
 		slog.Info("TUN mode not configured. Only SOCKS5 mode available.")
 		slog.Info("To enable TUN mode, run with: sudo uproxy server --tun-ip <ip> ...")
+		return nil, nil
 	}
 
-	listener, err := kcp.ServeConn(packetConn)
+	tunCfg := &tun.Config{
+		Name:    cfg.TUN.Name,
+		IP:      cfg.TUN.IP,
+		Netmask: cfg.TUN.Netmask,
+		IPv6:    cfg.TUN.IPv6,
+		MTU:     cfg.TUN.MTU,
+	}
+
+	tunManager, err := tun.NewTUNManager(tunCfg, cfg.Outbound, cfg.TUN.AutoRoute)
 	if err != nil {
-		if tunManager != nil {
-			tunManager.Close()
-		}
-		return err
+		return nil, err
 	}
-	slog.Info("Listening on KCP", "addr", listenAddr)
 
-	go func() {
-		sigChan := make(chan os.Signal, 1)
-		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-		<-sigChan
-		slog.Info("Shutting down...")
-		activeClientsMu.Lock()
-		for client := range activeClients {
-			client.Close()
-		}
-		activeClientsMu.Unlock()
-		time.Sleep(200 * time.Millisecond)
+	slog.Info("TUN manager initialized (running as root)",
+		"device", tunCfg.Name,
+		"ipv4", tunCfg.IP,
+		"ipv6", tunCfg.IPv6,
+		"auto_route", cfg.TUN.AutoRoute)
 
-		// Close TUN manager
-		if tunManager != nil {
-			tunManager.Close()
-		}
+	return tunManager, nil
+}
 
-		listener.Close()
-		packetConn.Close()
-		cancel()
-	}()
-
+// acceptConnections accepts and handles incoming KCP connections
+func acceptConnections(ctx context.Context, listener *kcp.Listener, cfg *config.ServerConfig, sshConfig *ssh.ServerConfig, tunManager *tun.TUNManager, clientTracker *clientTracker) error {
 	for {
 		conn, err := listener.AcceptKCP()
 		if err != nil {
@@ -188,64 +181,133 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 			}
 		}
 
-		session := conn
-		session.SetStreamMode(true)
-		kcpCfg.Apply(session)
-		session.SetDeadLink(0) // 0 = disabled, connectivity monitor handles all timeouts
+		// Configure KCP session
+		conn.SetStreamMode(true)
+		cfg.KCP.ToKCPConfig().Apply(conn)
+		conn.SetDeadLink(config.DefaultKCPDeadLink)
 
-		go handleSSHConnection(ctx, conn, config, outbound, proxyDialTimeout, tunManager, &activeClientsMu, activeClients)
+		// Handle connection in background
+		go handleSSHConnection(ctx, conn, sshConfig, cfg, tunManager, clientTracker)
 	}
 }
 
-func handleSSHConnection(ctx context.Context, conn net.Conn, config *ssh.ServerConfig, outbound string, dialTimeout time.Duration, tunManager *tun.TUNManager, activeClientsMu *sync.Mutex, activeClients map[*ssh.ServerConn]struct{}) {
-	sshConn, chans, reqs, err := ssh.NewServerConn(conn, config)
+// handleSSHConnection handles a single SSH connection
+func handleSSHConnection(ctx context.Context, conn net.Conn, sshConfig *ssh.ServerConfig, cfg *config.ServerConfig, tunManager *tun.TUNManager, clientTracker *clientTracker) {
+	sshConn, chans, reqs, err := ssh.NewServerConn(conn, sshConfig)
 	if err != nil {
 		slog.Error("SSH handshake failed", "error", err)
 		conn.Close()
 		return
 	}
+
 	slog.Info("Client connected (SSH auth success)", "layer", "ssh", "addr", sshConn.RemoteAddr().String())
 
-	activeClientsMu.Lock()
-	activeClients[sshConn] = struct{}{}
-	activeClientsMu.Unlock()
-
-	defer func() {
-		activeClientsMu.Lock()
-		delete(activeClients, sshConn)
-		activeClientsMu.Unlock()
-	}()
+	clientTracker.add(sshConn)
+	defer clientTracker.remove(sshConn)
 
 	go ssh.DiscardRequests(reqs)
 
+	// Create channel handler
+	handler := newChannelHandler(ctx, cfg, tunManager, sshConn.RemoteAddr())
+
+	// Handle incoming channels
 	for newChan := range chans {
-		switch newChan.ChannelType() {
-		case socks5.ChannelTypeTCP:
-			channel, requests, err := newChan.Accept()
-			if err != nil {
-				continue
-			}
-			go ssh.DiscardRequests(requests)
-			go socks5.HandleTCP(ctx, channel, sshConn.RemoteAddr(), outbound, dialTimeout)
-
-		case socks5.ChannelTypeUDP:
-			channel, requests, err := newChan.Accept()
-			if err != nil {
-				continue
-			}
-			go ssh.DiscardRequests(requests)
-			go socks5.HandleUDP(ctx, channel, outbound, dialTimeout)
-
-		case tun.ChannelTypeTUN:
-			channel, requests, err := newChan.Accept()
-			if err != nil {
-				continue
-			}
-			go ssh.DiscardRequests(requests)
-			go tun.HandleTUN(channel, tunManager)
-
-		default:
-			newChan.Reject(ssh.UnknownChannelType, "unknown channel type")
+		if err := handler.handle(newChan); err != nil {
+			slog.Warn("Channel handling failed", "type", newChan.ChannelType(), "error", err)
 		}
+	}
+}
+
+// channelHandler handles different SSH channel types
+type channelHandler struct {
+	ctx        context.Context
+	cfg        *config.ServerConfig
+	tunManager *tun.TUNManager
+	remoteAddr net.Addr
+}
+
+func newChannelHandler(ctx context.Context, cfg *config.ServerConfig, tunManager *tun.TUNManager, remoteAddr net.Addr) *channelHandler {
+	return &channelHandler{
+		ctx:        ctx,
+		cfg:        cfg,
+		tunManager: tunManager,
+		remoteAddr: remoteAddr,
+	}
+}
+
+// handle dispatches channel handling based on type
+func (h *channelHandler) handle(newChan ssh.NewChannel) error {
+	switch newChan.ChannelType() {
+	case socks5.ChannelTypeTCP:
+		return h.handleTCP(newChan)
+	case socks5.ChannelTypeUDP:
+		return h.handleUDP(newChan)
+	case tun.ChannelTypeTUN:
+		return h.handleTUN(newChan)
+	default:
+		newChan.Reject(ssh.UnknownChannelType, "unknown channel type")
+		return nil
+	}
+}
+
+func (h *channelHandler) handleTCP(newChan ssh.NewChannel) error {
+	channel, requests, err := newChan.Accept()
+	if err != nil {
+		return err
+	}
+	go ssh.DiscardRequests(requests)
+	go socks5.HandleTCP(h.ctx, channel, h.remoteAddr, h.cfg.Outbound, h.cfg.ProxyDialTimeout)
+	return nil
+}
+
+func (h *channelHandler) handleUDP(newChan ssh.NewChannel) error {
+	channel, requests, err := newChan.Accept()
+	if err != nil {
+		return err
+	}
+	go ssh.DiscardRequests(requests)
+	go socks5.HandleUDP(h.ctx, channel, h.cfg.Outbound, h.cfg.ProxyDialTimeout)
+	return nil
+}
+
+func (h *channelHandler) handleTUN(newChan ssh.NewChannel) error {
+	channel, requests, err := newChan.Accept()
+	if err != nil {
+		return err
+	}
+	go ssh.DiscardRequests(requests)
+	go tun.HandleTUN(channel, h.tunManager)
+	return nil
+}
+
+// clientTracker tracks active SSH connections for graceful shutdown
+type clientTracker struct {
+	mu      sync.Mutex
+	clients map[*ssh.ServerConn]struct{}
+}
+
+func newClientTracker() *clientTracker {
+	return &clientTracker{
+		clients: make(map[*ssh.ServerConn]struct{}),
+	}
+}
+
+func (ct *clientTracker) add(conn *ssh.ServerConn) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	ct.clients[conn] = struct{}{}
+}
+
+func (ct *clientTracker) remove(conn *ssh.ServerConn) {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	delete(ct.clients, conn)
+}
+
+func (ct *clientTracker) closeAll() {
+	ct.mu.Lock()
+	defer ct.mu.Unlock()
+	for client := range ct.clients {
+		client.Close()
 	}
 }
