@@ -141,3 +141,101 @@ func ParseRoutes(routes string) []string {
 	}
 	return result
 }
+
+// EnableIPForwarding enables IP forwarding in the kernel
+func EnableIPForwarding() error {
+	if runtime.GOOS != "linux" {
+		return nil // Only needed on Linux
+	}
+
+	cmd := exec.Command("sysctl", "-w", "net.ipv4.ip_forward=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to enable IP forwarding: %w, output: %s", err, output)
+	}
+
+	cmd = exec.Command("sysctl", "-w", "net.ipv6.conf.all.forwarding=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		slog.Warn("Failed to enable IPv6 forwarding", "error", err, "output", string(output))
+	}
+
+	slog.Info("IP forwarding enabled")
+	return nil
+}
+
+// EnableNAT sets up NAT/masquerading for the TUN interface
+func EnableNAT(tunIface, outboundIface string) error {
+	if runtime.GOOS != "linux" {
+		return nil // Only needed on Linux
+	}
+
+	// If no outbound interface specified, try to detect default route interface
+	if outboundIface == "" {
+		iface, err := getDefaultInterface()
+		if err != nil {
+			return fmt.Errorf("failed to detect default interface: %w", err)
+		}
+		outboundIface = iface
+	}
+
+	// Add iptables masquerading rule
+	cmd := exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to enable NAT: %w, output: %s", err, output)
+	}
+
+	// Allow forwarding from TUN to outbound interface
+	cmd = exec.Command("iptables", "-A", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		slog.Warn("Failed to add forward rule", "error", err, "output", string(output))
+	}
+
+	// Allow forwarding from outbound to TUN interface (return traffic)
+	cmd = exec.Command("iptables", "-A", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		slog.Warn("Failed to add return forward rule", "error", err, "output", string(output))
+	}
+
+	slog.Info("NAT enabled", "tun", tunIface, "outbound", outboundIface)
+	return nil
+}
+
+// DisableNAT removes NAT/masquerading rules
+func DisableNAT(tunIface, outboundIface string) {
+	if runtime.GOOS != "linux" {
+		return
+	}
+
+	if outboundIface == "" {
+		iface, err := getDefaultInterface()
+		if err != nil {
+			return
+		}
+		outboundIface = iface
+	}
+
+	// Remove iptables rules (use -D instead of -A)
+	exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE").Run()
+	exec.Command("iptables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run()
+	exec.Command("iptables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run()
+
+	slog.Info("NAT disabled", "tun", tunIface, "outbound", outboundIface)
+}
+
+// getDefaultInterface returns the default network interface
+func getDefaultInterface() (string, error) {
+	cmd := exec.Command("ip", "route", "show", "default")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", err
+	}
+
+	// Parse output like: "default via 192.168.1.1 dev eth0 ..."
+	fields := strings.Fields(string(output))
+	for i, field := range fields {
+		if field == "dev" && i+1 < len(fields) {
+			return fields[i+1], nil
+		}
+	}
+
+	return "", fmt.Errorf("could not determine default interface")
+}

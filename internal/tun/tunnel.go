@@ -198,46 +198,109 @@ func readFramed(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-// HandleTUN handles TUN packets on the server side by injecting them into the system's IP stack
-func HandleTUN(channel ssh.Channel, outbound string) {
+// HandleTUN handles TUN packets on the server side using a TUN device
+func HandleTUN(channel ssh.Channel, cfg *Config, outbound string) {
 	defer channel.Close()
 
 	slog.Info("TUN channel opened")
 
-	// Create packet injector
-	injector, err := NewPacketInjector(outbound)
+	// Create and configure TUN device
+	iface, err := CreateTUN(cfg)
 	if err != nil {
-		slog.Error("Failed to create packet injector", "error", err)
+		slog.Error("Failed to create TUN device", "error", err)
 		return
 	}
-	defer injector.Close()
+	defer iface.Close()
 
-	var rxPackets, rxBytes atomic.Int64
-
-	// Read from channel, inject into system stack
-	for {
-		packet, err := readFramed(channel)
-		if err != nil {
-			if err != io.EOF {
-				slog.Error("Failed to read from channel", "error", err)
-			}
-			break
-		}
-
-		// Basic validation
-		if !ValidatePacket(packet) {
-			slog.Debug("Invalid packet dropped", "size", len(packet))
-			continue
-		}
-
-		rxPackets.Add(1)
-		rxBytes.Add(int64(len(packet)))
-
-		// Inject packet into system stack - kernel handles routing, NAT, etc.
-		if err := injector.Inject(packet); err != nil {
-			slog.Debug("Failed to inject packet", "error", err)
-		}
+	// Enable IP forwarding and NAT
+	if err := EnableIPForwarding(); err != nil {
+		slog.Warn("Failed to enable IP forwarding", "error", err)
 	}
 
-	slog.Info("TUN channel closed", "rx_packets", rxPackets.Load(), "rx_bytes", rxBytes.Load())
+	if err := EnableNAT(iface.Name(), outbound); err != nil {
+		slog.Warn("Failed to enable NAT", "error", err)
+	}
+
+	slog.Info("Server TUN tunnel started", "device", iface.Name(), "ip", cfg.IP)
+
+	// Statistics
+	var txPackets, rxPackets, txBytes, rxBytes atomic.Int64
+
+	var wg sync.WaitGroup
+	errChan := make(chan error, 2)
+
+	// SSH -> TUN (RX from client)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		for {
+			packet, err := readFramed(channel)
+			if err != nil {
+				if err != io.EOF {
+					errChan <- fmt.Errorf("SSH read error: %w", err)
+				}
+				return
+			}
+
+			// Basic validation
+			if !ValidatePacket(packet) {
+				slog.Debug("Invalid packet dropped", "size", len(packet))
+				continue
+			}
+
+			// Write packet to TUN device - kernel routes it to internet
+			if _, err := iface.Write(packet); err != nil {
+				errChan <- fmt.Errorf("TUN write error: %w", err)
+				return
+			}
+
+			rxPackets.Add(1)
+			rxBytes.Add(int64(len(packet)))
+		}
+	}()
+
+	// TUN -> SSH (TX to client)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		buf := make([]byte, MaxPacketSize)
+
+		for {
+			n, err := iface.Read(buf)
+			if err != nil {
+				errChan <- fmt.Errorf("TUN read error: %w", err)
+				return
+			}
+
+			if n == 0 {
+				continue
+			}
+
+			packet := buf[:n]
+
+			// Basic validation
+			if !ValidatePacket(packet) {
+				slog.Debug("Invalid packet dropped", "size", n)
+				continue
+			}
+
+			// Write framed packet to SSH channel
+			if err := writeFramed(channel, packet); err != nil {
+				errChan <- fmt.Errorf("SSH write error: %w", err)
+				return
+			}
+
+			txPackets.Add(1)
+			txBytes.Add(int64(n))
+		}
+	}()
+
+	// Wait for error
+	err = <-errChan
+	slog.Info("TUN channel closed", "tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
+		"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load(), "error", err)
+
+	// Cleanup NAT rules
+	DisableNAT(iface.Name(), outbound)
 }

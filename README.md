@@ -134,18 +134,19 @@ sudo ./bin/uproxy-client-amd64 \
 
 **TUN Mode Architecture:**
 
-TUN mode leverages the **system's native TCP/IP stack** for maximum efficiency and reliability:
+TUN mode uses a **symmetric architecture** where both client and server leverage the **system's native TCP/IP stack** for maximum efficiency and reliability:
 
-- **Client Side**: Applications → Kernel TCP/IP stack → TUN device → uproxy reads complete IP packets → SSH/KCP tunnel
-- **Server Side**: SSH/KCP tunnel → uproxy injects packets via raw sockets → Kernel routing/NAT → Internet
+- **Client Side**: Applications → Kernel TCP/IP stack → Client TUN device → SSH/KCP tunnel
+- **Server Side**: SSH/KCP tunnel → Server TUN device → Kernel routing/NAT/forwarding → Internet (and back)
 
 **Why this approach?**
+- **Symmetric design**: Both sides use TUN devices for clean bidirectional packet flow
 - **No protocol reinvention**: The kernel handles TCP state machines, checksums, fragmentation, congestion control, etc.
 - **Full protocol support**: TCP, UDP, ICMP, ICMPv6, and any other IP protocol work automatically
 - **Better performance**: Zero overhead from userspace protocol handling
 - **More reliable**: Battle-tested kernel networking stack vs. custom implementations
 
-The server requires `CAP_NET_RAW` capability to inject packets using raw sockets. All routing, NAT, and forwarding decisions are handled by the kernel's networking stack.
+The server automatically enables IP forwarding and sets up NAT/masquerading rules using iptables. All routing and forwarding decisions are handled by the kernel's networking stack. Both client and server require root privileges or `CAP_NET_ADMIN` capability to create TUN devices.
 
 *Note: On your first connection, the client will prompt your terminal to accept the server's host key, exactly like OpenSSH.*
 
