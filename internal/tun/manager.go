@@ -295,9 +295,13 @@ func (m *TUNManager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Close all client routes
+	// Close all client routes (avoid double-close for dual-stack clients)
+	closed := make(map[*ClientRoute]bool)
 	for _, route := range m.clients {
-		close(route.done)
+		if !closed[route] {
+			close(route.done)
+			closed[route] = true
+		}
 	}
 	m.clients = make(map[string]*ClientRoute)
 
