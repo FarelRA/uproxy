@@ -117,27 +117,45 @@ build_args() {
     args+=(--log-level "${LOG_LEVEL:-info}")
     
     # Log format
-    args+=(--log-format "${LOG_FORMAT:-text}")
+    args+=(--log-format "${LOG_FORMAT:-console}")
     
-    # Idle timeout
-    args+=(--idle-timeout "${IDLE_TIMEOUT:-5m}")
-    
-    # Public address (optional)
-    if [[ -n "${SERVER_PUBLIC_ADDR:-}" ]]; then
-        args+=(--public-addr "$SERVER_PUBLIC_ADDR")
+    # SSH configuration
+    if [[ -n "${SSH_DIR:-}" ]]; then
+        args+=(--ssh-dir "$SSH_DIR")
     fi
+    if [[ -n "${SSH_PRIVATE_KEY:-}" ]]; then
+        args+=(--ssh-private-key "$SSH_PRIVATE_KEY")
+    fi
+    if [[ -n "${SSH_AUTHORIZED_KEYS:-}" ]]; then
+        args+=(--ssh-authorized-keys "$SSH_AUTHORIZED_KEYS")
+    fi
+    
+    # Timeouts
+    args+=(--idle-timeout "${IDLE_TIMEOUT:-1h}")
+    args+=(--proxy-dial-timeout "${PROXY_DIAL_TIMEOUT:-5s}")
+    args+=(--reconnect-interval "${RECONNECT_INTERVAL:-1s}")
+    
+    # Buffer sizes
+    args+=(--tcp-buf "${TCP_BUF:-32768}")
+    args+=(--udp-sockbuf "${UDP_SOCKBUF:-4194304}")
+    
+    # KCP parameters
+    args+=(--kcp-nodelay "${KCP_NODELAY:-1}")
+    args+=(--kcp-interval "${KCP_INTERVAL:-10}")
+    args+=(--kcp-resend "${KCP_RESEND:-2}")
+    args+=(--kcp-nc "${KCP_NC:-1}")
+    args+=(--kcp-sndwnd "${KCP_SNDWND:-4096}")
+    args+=(--kcp-rcvwnd "${KCP_RCVWND:-4096}")
+    args+=(--kcp-mtu "${KCP_MTU:-1350}")
     
     # TUN mode parameters (requires root)
     # If running as root, provide default TUN parameters
     if [[ $EUID -eq 0 ]]; then
-        args+=(--tun-ip "${TUN_IP:-10.0.0.1}")
-        args+=(--tun-name "${TUN_NAME:-utun1}")
+        args+=(--tun-name "${TUN_NAME:-tun0}")
+        args+=(--tun-ip "${TUN_IP:-172.27.66.1}")
         args+=(--tun-netmask "${TUN_NETMASK:-255.255.255.0}")
+        args+=(--tun-ipv6 "${TUN_IPV6:-fd42:cafe:beef::1/64}")
         args+=(--tun-mtu "${TUN_MTU:-1280}")
-        
-        if [[ -n "${TUN_IPV6:-}" ]]; then
-            args+=(--tun-ipv6 "$TUN_IPV6")
-        fi
     fi
     
     # Extra flags
@@ -386,12 +404,33 @@ Environment Variables:
     LISTEN              Listen address (default: :6000)
     OUTBOUND            Outbound interface name (optional)
     LOG_LEVEL           Log level: debug|info|warn|error (default: info)
-    LOG_FORMAT          Log format: text|json (default: text)
-    IDLE_TIMEOUT        Idle timeout duration (default: 5m)
+    LOG_FORMAT          Log format: console|json (default: console)
+    SSH_DIR             SSH directory (default: ~/.ssh)
+    SSH_PRIVATE_KEY     SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)
+    SSH_AUTHORIZED_KEYS SSH authorized_keys file (default: ~/.ssh/authorized_keys)
+    IDLE_TIMEOUT        Idle timeout duration (default: 1h)
+    PROXY_DIAL_TIMEOUT  Timeout for dialing upstream SOCKS5 targets (default: 5s)
+    RECONNECT_INTERVAL  Interval to retry binding UDP socket on network drop (default: 1s)
+    TCP_BUF             TCP buffer size per stream (default: 32768)
+    UDP_SOCKBUF         UDP socket buffer size (default: 4194304)
+    KCP_NODELAY         KCP nodelay mode (default: 1)
+    KCP_INTERVAL        KCP timer interval in ms (default: 10)
+    KCP_RESEND          KCP fast resend mode (default: 2)
+    KCP_NC              KCP disable congestion control (default: 1)
+    KCP_SNDWND          KCP send window (default: 4096)
+    KCP_RCVWND          KCP receive window (default: 4096)
+    KCP_MTU             KCP MTU (default: 1350)
+    TUN_NAME            TUN device name (default: tun0)
+    TUN_IP              TUN interface IPv4 address (default: 172.27.66.1)
+    TUN_NETMASK         TUN interface netmask (default: 255.255.255.0)
+    TUN_IPV6            TUN interface IPv6 address with prefix (default: fd42:cafe:beef::1/64)
+    TUN_MTU             TUN interface MTU (default: 1280)
     EXTRA_FLAGS         Additional flags to pass to uproxy-server
-    SERVER_PUBLIC_ADDR  Public address for server (optional)
 
 Examples:
+    # Start with default settings (requires root for TUN mode)
+    sudo $0 start
+    
     # Start with custom listen address
     LISTEN=:8080 $0 start
     
@@ -400,6 +439,15 @@ Examples:
     
     # Start with outbound interface
     OUTBOUND=eth0 $0 start
+    
+    # Start with custom SSH configuration
+    SSH_DIR=/etc/uproxy/ssh $0 start
+    
+    # Start with custom KCP parameters
+    KCP_MTU=1400 KCP_SNDWND=8192 $0 start
+    
+    # Start with custom TUN configuration
+    sudo TUN_IP=192.168.100.1 TUN_IPV6=fd00:1234::1/64 $0 start
 
 EOF
 }
