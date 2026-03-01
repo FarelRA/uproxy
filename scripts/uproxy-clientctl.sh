@@ -134,8 +134,8 @@ build_args() {
             args+=(--listen "$LISTEN")
         fi
     else
-        # SOCKS5 mode - force it to prevent auto-selection when running as root
-        args+=(--mode socks5)
+        # Auto mode - let the binary decide based on privileges
+        args+=(--mode "${MODE:-auto}")
         args+=(--listen "${LISTEN:-127.0.0.1:1080}")
     fi
     
