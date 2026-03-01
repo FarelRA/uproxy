@@ -55,12 +55,12 @@ func (bp *bufferPool) Get() []byte {
 }
 
 // Put returns a buffer to the pool.
-func (bp *bufferPool) Put(buf *[]byte) error {
+func (bp *bufferPool) Put(buf []byte) error {
 	// Only put back buffers of the correct size.
-	if cap(*buf) != mtuLimit {
+	if cap(buf) != mtuLimit {
 		return errBufferSizeMismatch
 	}
-	*buf = (*buf)[:cap(*buf)] // reset slice length to full capacity
+	buf = buf[:cap(buf)] // reset slice length to full capacity
 	bp.xmitBuf.Put(buf)
 	return nil
 }

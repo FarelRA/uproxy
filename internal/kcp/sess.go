@@ -174,7 +174,7 @@ func newUDPSession(conv uint32, l *Listener, conn net.PacketConn, ownConn bool, 
 				return
 			default:
 				// drop and recycle to avoid blocking; KCP will retransmit if needed
-				defaultBufferPool.Put(&bts)
+				defaultBufferPool.Put(bts)
 			}
 		}
 	})
@@ -621,7 +621,7 @@ func (s *UDPSession) postProcess() {
 				s.kcp.debugLog(IKCP_LOG_OUTPUT, "conv", s.kcp.conv, "datalen", bytesToSend)
 				// recycle
 				for k := range txqueue {
-					defaultBufferPool.Put(&txqueue[k].Buffers[0])
+					defaultBufferPool.Put(txqueue[k].Buffers[0])
 					txqueue[k].Buffers = nil
 				}
 				txqueue = txqueue[:0]

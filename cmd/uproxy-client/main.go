@@ -30,7 +30,7 @@ func main() {
 	var kcpCfg kcp.Config
 
 	// TUN mode configuration
-	var tunName, tunIP, tunNetmask, tunRoutes string
+	var tunName, tunIP, tunNetmask, tunIPv6, tunRoutes string
 	var tunMTU int
 
 	var rootCmd = &cobra.Command{
@@ -44,6 +44,7 @@ func main() {
 				Name:    tunName,
 				IP:      tunIP,
 				Netmask: tunNetmask,
+				IPv6:    tunIPv6,
 				MTU:     tunMTU,
 			}
 
@@ -51,7 +52,7 @@ func main() {
 		},
 	}
 
-	rootCmd.Flags().StringVar(&mode, "mode", "socks5", "Operating mode: socks5 or tun")
+	rootCmd.Flags().StringVar(&mode, "mode", "auto", "Operating mode: auto (default), socks5, or tun. Auto selects tun if root, socks5 otherwise")
 	rootCmd.Flags().StringVarP(&listenAddr, "listen", "l", "127.0.0.1:1080", "Local SOCKS5 listen address (socks5 mode only)")
 	rootCmd.Flags().StringVarP(&serverAddr, "server", "s", "", "Remote server address (e.g., 203.0.113.50:6000)")
 	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
@@ -59,10 +60,11 @@ func main() {
 
 	// TUN mode flags
 	rootCmd.Flags().StringVar(&tunName, "tun-name", "utun0", "TUN device name (tun mode only)")
-	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "", "TUN interface IP address (required for tun mode)")
+	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "", "TUN interface IPv4 address (required for tun mode)")
 	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask (tun mode only)")
+	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "", "TUN interface IPv6 address with prefix (e.g., fd00::2/64)")
 	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1400, "TUN interface MTU (tun mode only)")
-	rootCmd.Flags().StringVar(&tunRoutes, "tun-routes", "", "Comma-separated routes to add (e.g., 0.0.0.0/0,8.8.8.8/32)")
+	rootCmd.Flags().StringVar(&tunRoutes, "tun-routes", "", "Comma-separated routes to add (e.g., 0.0.0.0/0,8.8.8.8/32,::/0)")
 
 	rootCmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
 	rootCmd.Flags().DurationVar(&sshTimeout, "ssh-timeout", 10*time.Second, "Timeout for the initial SSH handshake")
@@ -89,12 +91,33 @@ func main() {
 
 // runClient initializes the background connection loop and the foreground proxy (SOCKS5 or TUN).
 func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, tunRoutes string) error {
+	// Auto-detect mode based on privileges
+	if mode == "auto" {
+		if uproxy.IsRoot() {
+			mode = "tun"
+			slog.Info("Auto-selected TUN mode (running as root)")
+		} else {
+			mode = "socks5"
+			slog.Info("Auto-selected SOCKS5 mode (not running as root)")
+		}
+	}
+
 	// Validate mode-specific requirements
-	if mode == "tun" && tunCfg.IP == "" {
-		return fmt.Errorf("--tun-ip is required for tun mode")
+	if mode == "socks5" {
+		if listenAddr == "" {
+			return fmt.Errorf("--listen is required for socks5 mode")
+		}
+	}
+	if mode == "tun" {
+		if !uproxy.IsRoot() {
+			return fmt.Errorf("TUN mode requires root privileges. Run with sudo or use --mode socks5")
+		}
+		if tunCfg.IP == "" {
+			return fmt.Errorf("--tun-ip is required for tun mode")
+		}
 	}
 	if mode != "socks5" && mode != "tun" {
-		return fmt.Errorf("invalid mode: %s (must be 'socks5' or 'tun')", mode)
+		return fmt.Errorf("invalid mode: %s (must be 'auto', 'socks5', or 'tun')", mode)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -198,9 +221,10 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 	}
 
 	// Spin up connection in background
-	connect()
+	go connect()
 
 	// Start proxy based on mode
+	slog.Info("Starting proxy", "mode", mode, "listenAddr", listenAddr)
 	if mode == "socks5" {
 		// Start SOCKS5 Server
 		go func() {

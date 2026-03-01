@@ -3,7 +3,21 @@ package uproxy
 import (
 	"fmt"
 	"net"
+	"os"
+	"runtime"
 )
+
+// IsRoot checks if the current process has root/administrator privileges.
+// Returns true if running as root (Unix) or administrator (Windows).
+func IsRoot() bool {
+	if runtime.GOOS == "windows" {
+		// On Windows, this is more complex and would require syscalls
+		// For now, assume non-root on Windows
+		return false
+	}
+	// On Unix-like systems, check if effective user ID is 0
+	return os.Geteuid() == 0
+}
 
 // FirstIPv4OfInterface iterates through all IP addresses of a given network interface
 // and returns the very first valid IPv4 address it finds.
@@ -33,9 +47,77 @@ func FirstIPv4OfInterface(ifaceName string) (net.IP, error) {
 	return nil, fmt.Errorf("no IPv4 address found on interface %s", ifaceName)
 }
 
+// FirstIPv6OfInterface iterates through all IP addresses of a given network interface
+// and returns the very first valid IPv6 address it finds (excluding link-local).
+func FirstIPv6OfInterface(ifaceName string) (net.IP, error) {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return nil, fmt.Errorf("interface %s not found: %w", ifaceName, err)
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get addresses for %s: %w", ifaceName, err)
+	}
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		// Check if it's IPv6 (not IPv4) and not link-local
+		if ip.To4() == nil && ip.To16() != nil && !ip.IsLinkLocalUnicast() {
+			return ip, nil
+		}
+	}
+	return nil, fmt.Errorf("no IPv6 address found on interface %s", ifaceName)
+}
+
+// FirstIPOfInterface returns the first IP address (IPv4 or IPv6) of a given interface.
+// It prefers IPv4 if available, otherwise returns IPv6.
+func FirstIPOfInterface(ifaceName string) (net.IP, error) {
+	// Try IPv4 first
+	if ip, err := FirstIPv4OfInterface(ifaceName); err == nil {
+		return ip, nil
+	}
+	// Fall back to IPv6
+	return FirstIPv6OfInterface(ifaceName)
+}
+
+// GetInterfaceIPs returns both IPv4 and IPv6 addresses for an interface.
+func GetInterfaceIPs(ifaceName string) (ipv4 net.IP, ipv6 net.IP, err error) {
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return nil, nil, fmt.Errorf("interface %s not found: %w", ifaceName, err)
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get addresses for %s: %w", ifaceName, err)
+	}
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+		if ip4 := ip.To4(); ip4 != nil && ipv4 == nil {
+			ipv4 = ip4
+		} else if ip.To4() == nil && ip.To16() != nil && !ip.IsLinkLocalUnicast() && ipv6 == nil {
+			ipv6 = ip
+		}
+	}
+	if ipv4 == nil && ipv6 == nil {
+		return nil, nil, fmt.Errorf("no IP addresses found on interface %s", ifaceName)
+	}
+	return ipv4, ipv6, nil
+}
+
 // BindAddrForInterface parses a listening address (like ":6000" or "0.0.0.0:6000").
 // If an interface name is provided, it replaces the wildcard host with the actual
-// IPv4 address of that interface to ensure strict binding.
+// IP address of that interface to ensure strict binding. Supports both IPv4 and IPv6.
 func BindAddrForInterface(addr, ifaceName string) (string, error) {
 	if ifaceName == "" {
 		return addr, nil
@@ -46,7 +128,7 @@ func BindAddrForInterface(addr, ifaceName string) (string, error) {
 	}
 	// If the user provided a wildcard, bind strictly to the interface's IP
 	if host == "" || host == "0.0.0.0" || host == "::" {
-		ip, err := FirstIPv4OfInterface(ifaceName)
+		ip, err := FirstIPOfInterface(ifaceName)
 		if err != nil {
 			return "", err
 		}

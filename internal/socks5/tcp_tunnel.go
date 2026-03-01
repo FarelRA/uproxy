@@ -24,7 +24,8 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	if outbound != "" {
-		ip, err := uproxy.FirstIPv4OfInterface(outbound)
+		// Try to get IP from interface (supports both IPv4 and IPv6)
+		ip, err := uproxy.FirstIPOfInterface(outbound)
 		if err != nil {
 			slog.Error("Failed to get IP for iface", "layer", "ssh_tcp", "iface", outbound, "error", err)
 			return

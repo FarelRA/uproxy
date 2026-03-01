@@ -180,7 +180,8 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	if outbound != "" {
-		ip, err := uproxy.FirstIPv4OfInterface(outbound)
+		// Try to get IP from interface (supports both IPv4 and IPv6)
+		ip, err := uproxy.FirstIPOfInterface(outbound)
 		if err == nil {
 			dialer.LocalAddr = &net.UDPAddr{IP: ip, Port: 0}
 		}

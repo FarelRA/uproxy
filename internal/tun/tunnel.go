@@ -202,26 +202,29 @@ func readFramed(r io.Reader) ([]byte, error) {
 func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 	defer channel.Close()
 
-	// Allocate IP for this client
-	clientIP, err := manager.AllocateIP()
+	// Allocate IPs for this client (IPv4 and optionally IPv6)
+	clientIPv4, clientIPv6, err := manager.AllocateIP()
 	if err != nil {
 		slog.Error("Failed to allocate IP for client", "error", err)
 		channel.Write([]byte("ERROR: No available IPs\n"))
 		return
 	}
 
-	slog.Info("TUN channel opened", "client_ip", clientIP)
+	slog.Info("TUN channel opened", "client_ipv4", clientIPv4, "client_ipv6", clientIPv6)
 
-	// Send assigned IP to client
-	ipMsg := fmt.Sprintf("IP:%s\n", clientIP)
+	// Send assigned IPs to client
+	ipMsg := fmt.Sprintf("IPv4:%s\n", clientIPv4)
+	if clientIPv6 != "" {
+		ipMsg += fmt.Sprintf("IPv6:%s\n", clientIPv6)
+	}
 	if _, err := channel.Write([]byte(ipMsg)); err != nil {
-		slog.Error("Failed to send IP to client", "error", err)
+		slog.Error("Failed to send IPs to client", "error", err)
 		return
 	}
 
 	// Register client with manager
-	route := manager.RegisterClient(clientIP, channel)
-	defer manager.UnregisterClient(clientIP)
+	route := manager.RegisterClient(clientIPv4, clientIPv6, channel)
+	defer manager.UnregisterClient(clientIPv4, clientIPv6)
 
 	// Statistics
 	var txPackets, rxPackets, txBytes, rxBytes atomic.Int64
@@ -231,7 +234,7 @@ func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 	for {
 		select {
 		case <-route.done:
-			slog.Info("TUN channel closed", "client_ip", clientIP,
+			slog.Info("TUN channel closed", "client_ipv4", clientIPv4, "client_ipv6", clientIPv6,
 				"tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
 				"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load())
 			return
@@ -241,9 +244,9 @@ func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 		packet, err := readFramed(channel)
 		if err != nil {
 			if err != io.EOF {
-				slog.Debug("SSH read error", "client_ip", clientIP, "error", err)
+				slog.Debug("SSH read error", "client_ipv4", clientIPv4, "error", err)
 			}
-			slog.Info("TUN channel closed", "client_ip", clientIP,
+			slog.Info("TUN channel closed", "client_ipv4", clientIPv4, "client_ipv6", clientIPv6,
 				"tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
 				"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load())
 			return
@@ -251,13 +254,13 @@ func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 
 		// Basic validation
 		if !ValidatePacket(packet) {
-			slog.Debug("Invalid packet dropped", "client_ip", clientIP, "size", len(packet))
+			slog.Debug("Invalid packet dropped", "client_ipv4", clientIPv4, "size", len(packet))
 			continue
 		}
 
 		// Write packet to shared TUN device - kernel routes it to internet
 		if err := manager.WritePacket(packet); err != nil {
-			slog.Debug("TUN write error", "client_ip", clientIP, "error", err)
+			slog.Debug("TUN write error", "client_ipv4", clientIPv4, "error", err)
 			continue
 		}
 

@@ -15,6 +15,7 @@ type Config struct {
 	Name    string
 	IP      string
 	Netmask string
+	IPv6    string // IPv6 address with prefix (e.g., "fd00::1/64")
 	MTU     int
 }
 
@@ -58,10 +59,20 @@ func configureTUN(name string, cfg *Config) error {
 }
 
 func configureLinux(name string, cfg *Config) error {
-	// Set IP address
+	// Set IPv4 address
 	cmd := exec.Command("ip", "addr", "add", fmt.Sprintf("%s/%s", cfg.IP, cidrFromNetmask(cfg.Netmask)), "dev", name)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to set IP address: %w, output: %s", err, output)
+	}
+
+	// Set IPv6 address if provided
+	if cfg.IPv6 != "" {
+		cmd = exec.Command("ip", "-6", "addr", "add", cfg.IPv6, "dev", name)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("Failed to set IPv6 address", "error", err, "output", string(output))
+		} else {
+			slog.Info("IPv6 address configured", "name", name, "ipv6", cfg.IPv6)
+		}
 	}
 
 	// Set MTU
@@ -81,10 +92,20 @@ func configureLinux(name string, cfg *Config) error {
 }
 
 func configureDarwin(name string, cfg *Config) error {
-	// Set IP address and destination
+	// Set IPv4 address and destination
 	cmd := exec.Command("ifconfig", name, cfg.IP, cfg.IP, "netmask", cfg.Netmask, "mtu", fmt.Sprintf("%d", cfg.MTU), "up")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to configure interface: %w, output: %s", err, output)
+	}
+
+	// Set IPv6 address if provided
+	if cfg.IPv6 != "" {
+		cmd = exec.Command("ifconfig", name, "inet6", cfg.IPv6)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("Failed to set IPv6 address", "error", err, "output", string(output))
+		} else {
+			slog.Info("IPv6 address configured", "name", name, "ipv6", cfg.IPv6)
+		}
 	}
 
 	slog.Info("TUN interface configured", "name", name, "ip", cfg.IP, "mtu", cfg.MTU)
@@ -93,15 +114,27 @@ func configureDarwin(name string, cfg *Config) error {
 
 // AddRoute adds a route through the TUN interface
 func AddRoute(dest, ifaceName string) error {
+	// Detect if this is an IPv6 route
+	isIPv6 := strings.Contains(dest, ":")
+
 	switch runtime.GOOS {
 	case "linux":
-		cmd := exec.Command("ip", "route", "add", dest, "dev", ifaceName)
+		args := []string{"route", "add", dest, "dev", ifaceName}
+		if isIPv6 {
+			args = []string{"-6", "route", "add", dest, "dev", ifaceName}
+		}
+		cmd := exec.Command("ip", args...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to add route %s: %w, output: %s", dest, err, output)
 		}
 	case "darwin":
 		// Parse destination to get network and gateway
-		cmd := exec.Command("route", "add", "-net", dest, "-interface", ifaceName)
+		args := []string{"add"}
+		if isIPv6 {
+			args = append(args, "-inet6")
+		}
+		args = append(args, "-net", dest, "-interface", ifaceName)
+		cmd := exec.Command("route", args...)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to add route %s: %w, output: %s", dest, err, output)
 		}
@@ -162,7 +195,7 @@ func EnableIPForwarding() error {
 	return nil
 }
 
-// EnableNAT sets up NAT/masquerading for the TUN interface
+// EnableNAT sets up NAT/masquerading for the TUN interface (both IPv4 and IPv6)
 func EnableNAT(tunIface, outboundIface string) error {
 	if runtime.GOOS != "linux" {
 		return nil // Only needed on Linux
@@ -177,7 +210,7 @@ func EnableNAT(tunIface, outboundIface string) error {
 		outboundIface = iface
 	}
 
-	// Add iptables masquerading rule
+	// IPv4 NAT rules
 	cmd := exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to enable NAT: %w, output: %s", err, output)
@@ -195,11 +228,31 @@ func EnableNAT(tunIface, outboundIface string) error {
 		slog.Warn("Failed to add return forward rule", "error", err, "output", string(output))
 	}
 
+	// IPv6 NAT rules (ip6tables)
+	cmd = exec.Command("ip6tables", "-t", "nat", "-A", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		slog.Warn("Failed to enable IPv6 NAT", "error", err, "output", string(output))
+	} else {
+		// Allow IPv6 forwarding from TUN to outbound interface
+		cmd = exec.Command("ip6tables", "-A", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("Failed to add IPv6 forward rule", "error", err, "output", string(output))
+		}
+
+		// Allow IPv6 forwarding from outbound to TUN interface (return traffic)
+		cmd = exec.Command("ip6tables", "-A", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("Failed to add IPv6 return forward rule", "error", err, "output", string(output))
+		}
+
+		slog.Info("IPv6 NAT enabled", "tun", tunIface, "outbound", outboundIface)
+	}
+
 	slog.Info("NAT enabled", "tun", tunIface, "outbound", outboundIface)
 	return nil
 }
 
-// DisableNAT removes NAT/masquerading rules
+// DisableNAT removes NAT/masquerading rules (both IPv4 and IPv6)
 func DisableNAT(tunIface, outboundIface string) {
 	if runtime.GOOS != "linux" {
 		return
@@ -213,10 +266,15 @@ func DisableNAT(tunIface, outboundIface string) {
 		outboundIface = iface
 	}
 
-	// Remove iptables rules (use -D instead of -A)
+	// Remove IPv4 iptables rules (use -D instead of -A)
 	exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE").Run()
 	exec.Command("iptables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run()
 	exec.Command("iptables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run()
+
+	// Remove IPv6 ip6tables rules
+	exec.Command("ip6tables", "-t", "nat", "-D", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE").Run()
+	exec.Command("ip6tables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run()
+	exec.Command("ip6tables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run()
 
 	slog.Info("NAT disabled", "tun", tunIface, "outbound", outboundIface)
 }

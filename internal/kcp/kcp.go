@@ -251,7 +251,7 @@ func (kcp *KCP) newSegment(size int) (seg segment) {
 // recycleSegment recycles a KCP segment
 func (kcp *KCP) recycleSegment(seg *segment) {
 	if seg.data != nil {
-		defaultBufferPool.Put(&seg.data)
+		defaultBufferPool.Put(seg.data)
 		seg.data = nil
 	}
 }

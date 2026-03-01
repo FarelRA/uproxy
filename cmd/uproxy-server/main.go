@@ -27,7 +27,7 @@ func main() {
 	var kcpCfg kcp.Config
 
 	// TUN configuration for server side
-	var tunName, tunIP, tunNetmask string
+	var tunName, tunIP, tunNetmask, tunIPv6 string
 	var tunMTU int
 
 	var rootCmd = &cobra.Command{
@@ -41,6 +41,7 @@ func main() {
 				Name:    tunName,
 				IP:      tunIP,
 				Netmask: tunNetmask,
+				IPv6:    tunIPv6,
 				MTU:     tunMTU,
 			}
 
@@ -70,8 +71,9 @@ func main() {
 
 	// TUN mode flags (server side)
 	rootCmd.Flags().StringVar(&tunName, "tun-name", "utun1", "TUN device name for server")
-	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "10.0.0.1", "TUN interface IP address for server")
+	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "10.0.0.1", "TUN interface IPv4 address for server")
 	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask")
+	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "", "TUN interface IPv6 address with prefix (e.g., fd00::1/64)")
 	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1280, "TUN interface MTU")
 
 	if err := rootCmd.Execute(); err != nil {
@@ -104,16 +106,22 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 	var activeClientsMu sync.Mutex
 	activeClients := make(map[*ssh.ServerConn]struct{})
 
-	// Initialize TUN manager (shared by all clients)
+	// Initialize TUN manager (shared by all clients) - only if running as root
 	var tunManager *tun.TUNManager
-	if tunCfg != nil {
+	if !uproxy.IsRoot() {
+		slog.Info("TUN mode disabled (not running as root). Only SOCKS5 mode available.")
+		slog.Info("To enable TUN mode, run with: sudo uproxy-server ...")
+	} else if tunCfg != nil && tunCfg.IP != "" {
 		tunManager, err = tun.NewTUNManager(tunCfg, outbound)
 		if err != nil {
 			slog.Warn("Failed to initialize TUN manager (TUN mode disabled)", "error", err)
 			tunManager = nil
 		} else {
-			slog.Info("TUN manager initialized", "device", tunCfg.Name, "ip", tunCfg.IP)
+			slog.Info("TUN manager initialized (running as root)", "device", tunCfg.Name, "ipv4", tunCfg.IP, "ipv6", tunCfg.IPv6)
 		}
+	} else {
+		slog.Info("TUN mode not configured. Only SOCKS5 mode available.")
+		slog.Info("To enable TUN mode, run with: sudo uproxy-server --tun-ip <ip> ...")
 	}
 
 	listener, err := kcp.ServeConn(packetConn)

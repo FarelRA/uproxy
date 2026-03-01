@@ -17,15 +17,18 @@ type TUNManager struct {
 	config   *Config
 	outbound string
 
-	mu          sync.RWMutex
-	clients     map[string]*ClientRoute // Map: client IP → routing info
-	ipPool      []string                // Available IPs
-	nextIPIndex int
+	mu            sync.RWMutex
+	clients       map[string]*ClientRoute // Map: client IP → routing info
+	ipv4Pool      []string                // Available IPv4 addresses
+	ipv6Pool      []string                // Available IPv6 addresses
+	nextIPv4Index int
+	nextIPv6Index int
 }
 
 // ClientRoute holds routing information for a single client.
 type ClientRoute struct {
-	IP      string
+	IPv4    string
+	IPv6    string
 	Channel ssh.Channel
 	done    chan struct{}
 }
@@ -50,27 +53,33 @@ func NewTUNManager(cfg *Config, outbound string) (*TUNManager, error) {
 		return nil, fmt.Errorf("failed to setup NAT: %v", err)
 	}
 
-	// Generate IP pool (10.0.0.2 - 10.0.0.254)
-	ipPool := generateIPPool(cfg.IP, cfg.Netmask)
+	// Generate IP pools
+	ipv4Pool := generateIPv4Pool(cfg.IP, cfg.Netmask)
+	var ipv6Pool []string
+	if cfg.IPv6 != "" {
+		ipv6Pool = generateIPv6Pool(cfg.IPv6)
+	}
 
 	mgr := &TUNManager{
-		device:      device,
-		config:      cfg,
-		outbound:    outbound,
-		clients:     make(map[string]*ClientRoute),
-		ipPool:      ipPool,
-		nextIPIndex: 0,
+		device:        device,
+		config:        cfg,
+		outbound:      outbound,
+		clients:       make(map[string]*ClientRoute),
+		ipv4Pool:      ipv4Pool,
+		ipv6Pool:      ipv6Pool,
+		nextIPv4Index: 0,
+		nextIPv6Index: 0,
 	}
 
 	// Start packet dispatcher
 	go mgr.dispatchPackets()
 
-	slog.Info("TUN manager initialized", "device", cfg.Name, "ip", cfg.IP, "pool_size", len(ipPool))
+	slog.Info("TUN manager initialized", "device", cfg.Name, "ip", cfg.IP, "ipv4_pool_size", len(ipv4Pool), "ipv6_pool_size", len(ipv6Pool))
 	return mgr, nil
 }
 
-// generateIPPool creates a list of available client IPs.
-func generateIPPool(serverIP, netmask string) []string {
+// generateIPv4Pool creates a list of available client IPv4 addresses.
+func generateIPv4Pool(serverIP, netmask string) []string {
 	// Parse server IP
 	ip := net.ParseIP(serverIP)
 	if ip == nil {
@@ -115,47 +124,104 @@ func generateIPPool(serverIP, netmask string) []string {
 	return pool
 }
 
-// AllocateIP assigns an IP address to a new client.
-func (m *TUNManager) AllocateIP() (string, error) {
+// generateIPv6Pool creates a list of available client IPv6 addresses.
+// Takes an IPv6 CIDR (e.g., "fd00::1/64") and generates addresses from ::2 onwards.
+func generateIPv6Pool(serverIPv6 string) []string {
+	// Parse IPv6 CIDR
+	ip, ipnet, err := net.ParseCIDR(serverIPv6)
+	if err != nil {
+		return nil
+	}
+
+	if ip.To4() != nil {
+		return nil // Not an IPv6 address
+	}
+
+	// Get the network prefix
+	network := ipnet.IP
+	prefixLen, _ := ipnet.Mask.Size()
+
+	// For simplicity, generate addresses in the lower 16 bits (last 2 bytes)
+	// This works well for /64 networks which are standard
+	var pool []string
+
+	// Generate 253 addresses (::2 to ::254)
+	for i := 2; i < 255; i++ {
+		clientIP := make(net.IP, 16)
+		copy(clientIP, network)
+		clientIP[15] = byte(i)
+
+		// Skip server IP
+		if clientIP.Equal(ip) {
+			continue
+		}
+
+		pool = append(pool, fmt.Sprintf("%s/%d", clientIP.String(), prefixLen))
+	}
+
+	return pool
+}
+
+// AllocateIP assigns IP addresses (IPv4 and optionally IPv6) to a new client.
+func (m *TUNManager) AllocateIP() (ipv4 string, ipv6 string, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if m.nextIPIndex >= len(m.ipPool) {
-		return "", fmt.Errorf("IP pool exhausted")
+	if m.nextIPv4Index >= len(m.ipv4Pool) {
+		return "", "", fmt.Errorf("IPv4 pool exhausted")
 	}
 
-	ip := m.ipPool[m.nextIPIndex]
-	m.nextIPIndex++
+	ipv4 = m.ipv4Pool[m.nextIPv4Index]
+	m.nextIPv4Index++
 
-	return ip, nil
+	// Allocate IPv6 if available
+	if len(m.ipv6Pool) > 0 && m.nextIPv6Index < len(m.ipv6Pool) {
+		ipv6 = m.ipv6Pool[m.nextIPv6Index]
+		m.nextIPv6Index++
+	}
+
+	return ipv4, ipv6, nil
 }
 
-// RegisterClient registers a client with its assigned IP and channel.
-func (m *TUNManager) RegisterClient(ip string, channel ssh.Channel) *ClientRoute {
+// RegisterClient registers a client with its assigned IPs and channel.
+func (m *TUNManager) RegisterClient(ipv4, ipv6 string, channel ssh.Channel) *ClientRoute {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	route := &ClientRoute{
-		IP:      ip,
+		IPv4:    ipv4,
+		IPv6:    ipv6,
 		Channel: channel,
 		done:    make(chan struct{}),
 	}
 
-	m.clients[ip] = route
-	slog.Info("Client registered", "ip", ip, "total_clients", len(m.clients))
+	m.clients[ipv4] = route
+	if ipv6 != "" {
+		// Extract IP without prefix for routing
+		if ip, _, err := net.ParseCIDR(ipv6); err == nil {
+			m.clients[ip.String()] = route
+		}
+	}
+
+	slog.Info("Client registered", "ipv4", ipv4, "ipv6", ipv6, "total_clients", len(m.clients))
 
 	return route
 }
 
-// UnregisterClient removes a client and frees its IP.
-func (m *TUNManager) UnregisterClient(ip string) {
+// UnregisterClient removes a client and frees its IPs.
+func (m *TUNManager) UnregisterClient(ipv4, ipv6 string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if route, exists := m.clients[ip]; exists {
+	if route, exists := m.clients[ipv4]; exists {
 		close(route.done)
-		delete(m.clients, ip)
-		slog.Info("Client unregistered", "ip", ip, "total_clients", len(m.clients))
+		delete(m.clients, ipv4)
+		if ipv6 != "" {
+			if ip, _, err := net.ParseCIDR(ipv6); err == nil {
+				delete(m.clients, ip.String())
+			}
+		}
+		slog.Info("Client unregistered", "ipv4", ipv4, "ipv6", ipv6, "total_clients", len(m.clients))
 	}
 }
 
