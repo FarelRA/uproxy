@@ -21,13 +21,13 @@ func ParseIPRouteOutput(output string) (*RouteInfo, error) {
 	info := &RouteInfo{}
 
 	for i, field := range fields {
-		if field == "via" && i+1 < len(fields) {
+		if field == "via" && i+1 < len(fields) && info.Gateway == "" {
 			info.Gateway = fields[i+1]
 		}
-		if field == "dev" && i+1 < len(fields) {
+		if field == "dev" && i+1 < len(fields) && info.Interface == "" {
 			info.Interface = fields[i+1]
 		}
-		if field == "src" && i+1 < len(fields) {
+		if field == "src" && i+1 < len(fields) && info.SrcIP == "" {
 			info.SrcIP = fields[i+1]
 		}
 	}
