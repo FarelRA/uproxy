@@ -2,25 +2,24 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 
-	"sync"
 	"uproxy/internal/kcp"
 	"uproxy/internal/socks5"
 	"uproxy/internal/tun"
 	"uproxy/internal/uproxy"
 )
 
-func main() {
+func serverCmd() *cobra.Command {
 	var listenAddr, outbound, logLevel, logFormat string
 	var idleTimeout, proxyDialTimeout, reconnectInterval time.Duration
 	var tcpBufSize, udpSockBuf int
@@ -34,9 +33,9 @@ func main() {
 	var tunMTU int
 	var autoRoute *bool
 
-	var rootCmd = &cobra.Command{
-		Use:   "uproxy-server",
-		Short: "Highly resilient KCP+SSH SOCKS5 server",
+	cmd := &cobra.Command{
+		Use:   "server",
+		Short: "Run uproxy server (KCP+SSH SOCKS5/TUN server)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			uproxy.InitLogger(logLevel, logFormat)
 			uproxy.TCPBufSize = tcpBufSize
@@ -53,53 +52,49 @@ func main() {
 		},
 	}
 
-	rootCmd.Flags().StringVarP(&listenAddr, "listen", "l", ":6000", "Listen address")
-	rootCmd.Flags().StringVarP(&outbound, "outbound", "o", "", "Outbound interface for dialing targets (e.g., tun0)")
-	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
-	rootCmd.Flags().StringVar(&logFormat, "log-format", "console", "Log format (console, json)")
+	cmd.Flags().StringVarP(&listenAddr, "listen", "l", ":6000", "Listen address")
+	cmd.Flags().StringVarP(&outbound, "outbound", "o", "", "Outbound interface for dialing targets (e.g., tun0)")
+	cmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	cmd.Flags().StringVar(&logFormat, "log-format", "console", "Log format (console, json)")
 
 	// SSH configuration flags
-	rootCmd.Flags().StringVar(&sshDir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
-	rootCmd.Flags().StringVar(&sshPrivateKey, "ssh-private-key", "", "SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)")
-	rootCmd.Flags().StringVar(&sshAuthorizedKeys, "ssh-authorized-keys", "", "SSH authorized_keys file (default: ~/.ssh/authorized_keys)")
+	cmd.Flags().StringVar(&sshDir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
+	cmd.Flags().StringVar(&sshPrivateKey, "ssh-private-key", "", "SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)")
+	cmd.Flags().StringVar(&sshAuthorizedKeys, "ssh-authorized-keys", "", "SSH authorized_keys file (default: ~/.ssh/authorized_keys)")
 
-	rootCmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
-	rootCmd.Flags().DurationVar(&proxyDialTimeout, "proxy-dial-timeout", 5*time.Second, "Timeout for dialing upstream SOCKS5 targets")
-	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", 1*time.Second, "Interval to retry binding UDP socket on network drop")
+	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
+	cmd.Flags().DurationVar(&proxyDialTimeout, "proxy-dial-timeout", 5*time.Second, "Timeout for dialing upstream SOCKS5 targets")
+	cmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", 1*time.Second, "Interval to retry binding UDP socket on network drop")
 
-	rootCmd.Flags().IntVar(&tcpBufSize, "tcp-buf", 32768, "TCP copy buffer size per SOCKS5 stream")
-	rootCmd.Flags().IntVar(&udpSockBuf, "udp-sockbuf", 4194304, "UDP socket buffer size")
+	cmd.Flags().IntVar(&tcpBufSize, "tcp-buf", 32768, "TCP copy buffer size per SOCKS5 stream")
+	cmd.Flags().IntVar(&udpSockBuf, "udp-sockbuf", 4194304, "UDP socket buffer size")
 
-	rootCmd.Flags().IntVar(&kcpCfg.NoDelay, "kcp-nodelay", 1, "KCP nodelay mode")
-	rootCmd.Flags().IntVar(&kcpCfg.Interval, "kcp-interval", 10, "KCP timer interval in ms")
-	rootCmd.Flags().IntVar(&kcpCfg.Resend, "kcp-resend", 2, "KCP fast resend mode")
-	rootCmd.Flags().IntVar(&kcpCfg.NoCongestionCtrl, "kcp-nc", 1, "KCP disable congestion control")
-	rootCmd.Flags().IntVar(&kcpCfg.SndWnd, "kcp-sndwnd", 4096, "KCP send window")
-	rootCmd.Flags().IntVar(&kcpCfg.RcvWnd, "kcp-rcvwnd", 4096, "KCP receive window")
-	rootCmd.Flags().IntVar(&kcpCfg.MTU, "kcp-mtu", 1350, "KCP MTU")
+	cmd.Flags().IntVar(&kcpCfg.NoDelay, "kcp-nodelay", 1, "KCP nodelay mode")
+	cmd.Flags().IntVar(&kcpCfg.Interval, "kcp-interval", 10, "KCP timer interval in ms")
+	cmd.Flags().IntVar(&kcpCfg.Resend, "kcp-resend", 2, "KCP fast resend mode")
+	cmd.Flags().IntVar(&kcpCfg.NoCongestionCtrl, "kcp-nc", 1, "KCP disable congestion control")
+	cmd.Flags().IntVar(&kcpCfg.SndWnd, "kcp-sndwnd", 4096, "KCP send window")
+	cmd.Flags().IntVar(&kcpCfg.RcvWnd, "kcp-rcvwnd", 4096, "KCP receive window")
+	cmd.Flags().IntVar(&kcpCfg.MTU, "kcp-mtu", 1350, "KCP MTU")
 
 	// TUN mode flags (server side)
-	rootCmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name for server")
-	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "172.27.66.1", "TUN interface IPv4 address for server")
-	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask")
-	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "fd42:cafe:beef::1/64", "TUN interface IPv6 address with prefix (e.g., fd42:cafe:beef::1/64)")
-	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1280, "TUN interface MTU")
-	autoRoute = rootCmd.Flags().Bool("auto-route", true, "Automatically configure NAT and IP forwarding (server) or routing (client)")
+	cmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name for server")
+	cmd.Flags().StringVar(&tunIP, "tun-ip", "172.27.66.1", "TUN interface IPv4 address for server")
+	cmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask")
+	cmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "fd42:cafe:beef::1/64", "TUN interface IPv6 address with prefix (e.g., fd42:cafe:beef::1/64)")
+	cmd.Flags().IntVar(&tunMTU, "tun-mtu", 1280, "TUN interface MTU")
+	autoRoute = cmd.Flags().Bool("auto-route", true, "Automatically configure NAT and IP forwarding (server) or routing (client)")
 
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
+	return cmd
 }
 
-// runServer initializes the ResilientPacketConn, KCP listener, and SSH subsystem.
 func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, sshDir, sshPrivateKey, sshAuthorizedKeys string, autoRoute bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	signer, err := uproxy.LoadPrivateKey(sshDir, sshPrivateKey)
 	if err != nil {
-		return fmt.Errorf("failed to load SSH key: %v", err)
+		return err
 	}
 
 	config := &ssh.ServerConfig{
@@ -136,7 +131,7 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 	var tunManager *tun.TUNManager
 	if !uproxy.IsRoot() {
 		slog.Info("TUN mode disabled (not running as root). Only SOCKS5 mode available.")
-		slog.Info("To enable TUN mode, run with: sudo uproxy-server ...")
+		slog.Info("To enable TUN mode, run with: sudo uproxy server ...")
 	} else if tunCfg != nil && tunCfg.IP != "" {
 		tunManager, err = tun.NewTUNManager(tunCfg, outbound, autoRoute)
 		if err != nil {
@@ -147,7 +142,7 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 		}
 	} else {
 		slog.Info("TUN mode not configured. Only SOCKS5 mode available.")
-		slog.Info("To enable TUN mode, run with: sudo uproxy-server --tun-ip <ip> ...")
+		slog.Info("To enable TUN mode, run with: sudo uproxy server --tun-ip <ip> ...")
 	}
 
 	listener, err := kcp.ServeConn(packetConn)
@@ -155,7 +150,7 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 		if tunManager != nil {
 			tunManager.Close()
 		}
-		return fmt.Errorf("failed to listen on KCP: %v", err)
+		return err
 	}
 	slog.Info("Listening on KCP", "addr", listenAddr)
 
@@ -202,7 +197,6 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 	}
 }
 
-// handleSSHConnection upgrades the KCP transport to an SSH connection and multiplexes SOCKS5 channels.
 func handleSSHConnection(ctx context.Context, conn net.Conn, config *ssh.ServerConfig, outbound string, dialTimeout time.Duration, tunManager *tun.TUNManager, activeClientsMu *sync.Mutex, activeClients map[*ssh.ServerConn]struct{}) {
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, config)
 	if err != nil {

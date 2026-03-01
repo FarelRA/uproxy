@@ -22,7 +22,7 @@ import (
 	"uproxy/internal/uproxy"
 )
 
-func main() {
+func clientCmd() *cobra.Command {
 	var listenAddr, serverAddr string
 	var logLevel, logFormat string
 	var mode string
@@ -38,9 +38,9 @@ func main() {
 	var tunMTU int
 	var autoRoute bool
 
-	var rootCmd = &cobra.Command{
-		Use:   "uproxy-client",
-		Short: "Highly resilient KCP+SSH proxy client (SOCKS5 or TUN mode)",
+	cmd := &cobra.Command{
+		Use:   "client",
+		Short: "Run uproxy client (SOCKS5 or TUN mode)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			uproxy.InitLogger(logLevel, logFormat)
 			uproxy.TCPBufSize = tcpBufSize
@@ -55,47 +55,43 @@ func main() {
 		},
 	}
 
-	rootCmd.Flags().StringVar(&mode, "mode", "auto", "Operating mode: auto (default), socks5, or tun. Auto selects tun if root, socks5 otherwise")
-	rootCmd.Flags().StringVarP(&listenAddr, "listen", "l", "127.0.0.1:1080", "Local SOCKS5 listen address (socks5 mode only)")
-	rootCmd.Flags().StringVarP(&serverAddr, "server", "s", "", "Remote server address (e.g., 203.0.113.50:6000)")
-	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
-	rootCmd.Flags().StringVar(&logFormat, "log-format", "console", "Log format (console, json)")
+	cmd.Flags().StringVar(&mode, "mode", "auto", "Operating mode: auto (default), socks5, or tun. Auto selects tun if root, socks5 otherwise")
+	cmd.Flags().StringVarP(&listenAddr, "listen", "l", "127.0.0.1:1080", "Local SOCKS5 listen address (socks5 mode only)")
+	cmd.Flags().StringVarP(&serverAddr, "server", "s", "", "Remote server address (e.g., 203.0.113.50:6000)")
+	cmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
+	cmd.Flags().StringVar(&logFormat, "log-format", "console", "Log format (console, json)")
 
 	// SSH configuration flags
-	rootCmd.Flags().StringVar(&sshDir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
-	rootCmd.Flags().StringVar(&sshPrivateKey, "ssh-private-key", "", "SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)")
-	rootCmd.Flags().StringVar(&sshKnownHosts, "ssh-known-hosts", "", "SSH known_hosts file (default: ~/.ssh/known_hosts)")
+	cmd.Flags().StringVar(&sshDir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
+	cmd.Flags().StringVar(&sshPrivateKey, "ssh-private-key", "", "SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)")
+	cmd.Flags().StringVar(&sshKnownHosts, "ssh-known-hosts", "", "SSH known_hosts file (default: ~/.ssh/known_hosts)")
 
 	// TUN mode flags
-	rootCmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name (tun mode only)")
-	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1400, "TUN interface MTU (tun mode only)")
-	rootCmd.Flags().StringVar(&tunRoutes, "tun-routes", "", "Comma-separated routes to add (e.g., 0.0.0.0/0,8.8.8.8/32,::/0). Note: IP addresses are assigned by the server")
-	rootCmd.Flags().BoolVar(&autoRoute, "auto-route", true, "Automatically set up routing to send all traffic through TUN (tun mode only)")
+	cmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name (tun mode only)")
+	cmd.Flags().IntVar(&tunMTU, "tun-mtu", 1400, "TUN interface MTU (tun mode only)")
+	cmd.Flags().StringVar(&tunRoutes, "tun-routes", "", "Comma-separated routes to add (e.g., 0.0.0.0/0,8.8.8.8/32,::/0). Note: IP addresses are assigned by the server")
+	cmd.Flags().BoolVar(&autoRoute, "auto-route", true, "Automatically set up routing to send all traffic through TUN (tun mode only)")
 
-	rootCmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
-	rootCmd.Flags().DurationVar(&sshTimeout, "ssh-timeout", 10*time.Second, "Timeout for the initial SSH handshake")
-	rootCmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", 1*time.Second, "Interval to retry binding UDP socket on network drop")
+	cmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
+	cmd.Flags().DurationVar(&sshTimeout, "ssh-timeout", 10*time.Second, "Timeout for the initial SSH handshake")
+	cmd.Flags().DurationVar(&reconnectInterval, "reconnect-interval", 1*time.Second, "Interval to retry binding UDP socket on network drop")
 
-	rootCmd.Flags().IntVar(&tcpBufSize, "tcp-buf", 32768, "TCP copy buffer size per SOCKS5 stream")
-	rootCmd.Flags().IntVar(&udpSockBuf, "udp-sockbuf", 4194304, "UDP socket buffer size")
+	cmd.Flags().IntVar(&tcpBufSize, "tcp-buf", 32768, "TCP copy buffer size per SOCKS5 stream")
+	cmd.Flags().IntVar(&udpSockBuf, "udp-sockbuf", 4194304, "UDP socket buffer size")
 
-	rootCmd.Flags().IntVar(&kcpCfg.NoDelay, "kcp-nodelay", 1, "KCP nodelay mode")
-	rootCmd.Flags().IntVar(&kcpCfg.Interval, "kcp-interval", 10, "KCP timer interval in ms")
-	rootCmd.Flags().IntVar(&kcpCfg.Resend, "kcp-resend", 2, "KCP fast resend mode")
-	rootCmd.Flags().IntVar(&kcpCfg.NoCongestionCtrl, "kcp-nc", 1, "KCP disable congestion control")
-	rootCmd.Flags().IntVar(&kcpCfg.SndWnd, "kcp-sndwnd", 4096, "KCP send window")
-	rootCmd.Flags().IntVar(&kcpCfg.RcvWnd, "kcp-rcvwnd", 4096, "KCP receive window")
-	rootCmd.Flags().IntVar(&kcpCfg.MTU, "kcp-mtu", 1350, "KCP MTU")
+	cmd.Flags().IntVar(&kcpCfg.NoDelay, "kcp-nodelay", 1, "KCP nodelay mode")
+	cmd.Flags().IntVar(&kcpCfg.Interval, "kcp-interval", 10, "KCP timer interval in ms")
+	cmd.Flags().IntVar(&kcpCfg.Resend, "kcp-resend", 2, "KCP fast resend mode")
+	cmd.Flags().IntVar(&kcpCfg.NoCongestionCtrl, "kcp-nc", 1, "KCP disable congestion control")
+	cmd.Flags().IntVar(&kcpCfg.SndWnd, "kcp-sndwnd", 4096, "KCP send window")
+	cmd.Flags().IntVar(&kcpCfg.RcvWnd, "kcp-rcvwnd", 4096, "KCP receive window")
+	cmd.Flags().IntVar(&kcpCfg.MTU, "kcp-mtu", 1350, "KCP MTU")
 
-	rootCmd.MarkFlagRequired("server")
+	cmd.MarkFlagRequired("server")
 
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
+	return cmd
 }
 
-// runClient initializes the background connection loop and the foreground proxy (SOCKS5 or TUN).
 func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, tunRoutes string, autoRoute bool, sshDir, sshPrivateKey, sshKnownHosts string) error {
 	// Auto-detect mode based on privileges
 	if mode == "auto" {
