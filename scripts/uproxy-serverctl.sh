@@ -8,17 +8,28 @@
 #   LISTEN              - Listen address (default: :6000)
 #   OUTBOUND            - Outbound interface name (optional)
 #   LOG_LEVEL           - Log level: debug|info|warn|error (default: info)
-#   LOG_FORMAT          - Log format: text|json (default: text)
-#   IDLE_TIMEOUT        - Idle timeout duration (default: 5m)
-#   EXTRA_FLAGS         - Additional flags to pass to uproxy-server
-#   SERVER_PUBLIC_ADDR  - Public address for server (optional)
-#
-#   TUN Mode (requires root):
-#   TUN_IP              - TUN interface IPv4 address (e.g., 10.0.0.1)
-#   TUN_IPV6            - TUN interface IPv6 address with prefix (e.g., fd00::1/64)
+#   LOG_FORMAT          - Log format: console|json (default: console)
+#   SSH_DIR             - SSH directory (default: ~/.ssh)
+#   SSH_PRIVATE_KEY     - SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)
+#   SSH_AUTHORIZED_KEYS - SSH authorized_keys file (default: ~/.ssh/authorized_keys)
+#   IDLE_TIMEOUT        - Idle timeout duration (default: 1h)
+#   PROXY_DIAL_TIMEOUT  - Timeout for dialing upstream SOCKS5 targets (default: 5s)
+#   RECONNECT_INTERVAL  - Interval to retry binding UDP socket on network drop (default: 1s)
+#   TCP_BUF             - TCP buffer size per stream (default: 32768)
+#   UDP_SOCKBUF         - UDP socket buffer size (default: 4194304)
+#   KCP_NODELAY         - KCP nodelay mode (default: 1)
+#   KCP_INTERVAL        - KCP timer interval in ms (default: 10)
+#   KCP_RESEND          - KCP fast resend mode (default: 2)
+#   KCP_NC              - KCP disable congestion control (default: 1)
+#   KCP_SNDWND          - KCP send window (default: 4096)
+#   KCP_RCVWND          - KCP receive window (default: 4096)
+#   KCP_MTU             - KCP MTU (default: 1350)
+#   TUN_NAME            - TUN device name (default: tun0)
+#   TUN_IP              - TUN interface IPv4 address (default: 172.27.66.1)
 #   TUN_NETMASK         - TUN interface netmask (default: 255.255.255.0)
-#   TUN_NAME            - TUN device name (default: utun0)
-#   TUN_MTU             - TUN interface MTU (default: 1400)
+#   TUN_IPV6            - TUN interface IPv6 address with prefix (default: fd42:cafe:beef::1/64)
+#   TUN_MTU             - TUN interface MTU (default: 1280)
+#   EXTRA_FLAGS         - Additional flags to pass to uproxy-server
 #
 
 set -euo pipefail
