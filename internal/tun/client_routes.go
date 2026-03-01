@@ -3,10 +3,10 @@ package tun
 import (
 	"fmt"
 	"log/slog"
-	"net"
 	"os/exec"
 	"strings"
 
+	"uproxy/internal/network"
 	"uproxy/internal/routing"
 )
 
@@ -43,41 +43,7 @@ func GetDefaultIPv6Gateway() (gateway, iface, srcIP string, err error) {
 
 // ResolveServerIPs resolves a server address (hostname:port or IP:port) to IPv4 and IPv6
 func ResolveServerIPs(serverAddr string) (ipv4, ipv6 string, err error) {
-	// Strip port if present
-	host, _, err := net.SplitHostPort(serverAddr)
-	if err != nil {
-		// Maybe no port was specified
-		host = serverAddr
-	}
-
-	// Check if it's already an IP
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.To4() != nil {
-			return host, "", nil
-		}
-		return "", host, nil
-	}
-
-	// Resolve hostname
-	ips, err := net.LookupIP(host)
-	if err != nil {
-		return "", "", fmt.Errorf("failed to resolve server address: %w", err)
-	}
-
-	if len(ips) == 0 {
-		return "", "", fmt.Errorf("no IPs found for server address")
-	}
-
-	// Collect both IPv4 and IPv6
-	for _, ip := range ips {
-		if ip.To4() != nil && ipv4 == "" {
-			ipv4 = ip.String()
-		} else if ip.To4() == nil && ipv6 == "" {
-			ipv6 = ip.String()
-		}
-	}
-
-	return ipv4, ipv6, nil
+	return network.ResolveToIPv4AndIPv6(serverAddr)
 }
 
 // SetupClientRoutes sets up routing to send all traffic through TUN

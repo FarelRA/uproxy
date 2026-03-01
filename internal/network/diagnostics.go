@@ -125,10 +125,7 @@ func (d *Diagnostics) DiagnoseFailure(ctx context.Context) DiagnosticResult {
 // getDefaultRoute retrieves the default gateway, source IP, and interface
 func (d *Diagnostics) getDefaultRoute(ctx context.Context) (gateway, srcIP, iface string, err error) {
 	// Try to get route to server address
-	host, _, err := net.SplitHostPort(d.serverAddr)
-	if err != nil {
-		host = d.serverAddr
-	}
+	host := ExtractHost(d.serverAddr)
 
 	info, err := routing.GetRouteToHost(ctx, host)
 	if err != nil {
