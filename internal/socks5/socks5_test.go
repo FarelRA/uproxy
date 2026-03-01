@@ -2,13 +2,16 @@ package socks5
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
 	"uproxy/internal/config"
+	"uproxy/internal/testutil"
 )
 
 // TestPerformSOCKS5Handshake tests the SOCKS5 handshake
@@ -54,10 +57,8 @@ func TestPerformSOCKS5Handshake(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conn := &mockConn{
-				readBuf:  bytes.NewBuffer(tt.clientData),
-				writeBuf: &bytes.Buffer{},
-			}
+			conn := testutil.NewMockConn()
+			conn.ReadBuf = bytes.NewBuffer(tt.clientData)
 
 			err := performSOCKS5Handshake(conn)
 			if (err != nil) != tt.wantErr {
@@ -66,7 +67,7 @@ func TestPerformSOCKS5Handshake(t *testing.T) {
 
 			if !tt.wantErr {
 				// Check response
-				resp := conn.writeBuf.Bytes()
+				resp := conn.WriteBuf.Bytes()
 				if len(resp) != 2 || resp[0] != 0x05 || resp[1] != 0x00 {
 					t.Errorf("Invalid handshake response: %v", resp)
 				}
@@ -174,10 +175,8 @@ func TestParseSOCKS5Request(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			conn := &mockConn{
-				readBuf:  bytes.NewBuffer(tt.data),
-				writeBuf: &bytes.Buffer{},
-			}
+			conn := testutil.NewMockConn()
+			conn.ReadBuf = bytes.NewBuffer(tt.data)
 
 			cmd, target, err := parseSOCKS5Request(conn)
 			if (err != nil) != tt.wantErr {
@@ -200,15 +199,9 @@ func TestParseSOCKS5Request(t *testing.T) {
 // TestHandleConnectCommand tests TCP CONNECT handling
 func TestHandleConnectCommand(t *testing.T) {
 	t.Run("successful connect", func(t *testing.T) {
-		conn := &mockConn{
-			readBuf:  &bytes.Buffer{},
-			writeBuf: &bytes.Buffer{},
-		}
-
-		remoteConn := &mockConn{
-			readBuf:  bytes.NewBuffer([]byte("response")),
-			writeBuf: &bytes.Buffer{},
-		}
+		conn := testutil.NewMockConn()
+		remoteConn := testutil.NewMockConn()
+		remoteConn.ReadBuf.Write([]byte("response"))
 
 		dialTCP := func(addr string) (net.Conn, error) {
 			return remoteConn, nil
@@ -217,17 +210,14 @@ func TestHandleConnectCommand(t *testing.T) {
 		handleConnectCommand(conn, "example.com:80", "127.0.0.1:12345", dialTCP)
 
 		// Check success response
-		resp := conn.writeBuf.Bytes()
+		resp := conn.WriteBuf.Bytes()
 		if len(resp) < 10 || resp[0] != 0x05 || resp[1] != 0x00 {
 			t.Errorf("Invalid success response: %v", resp)
 		}
 	})
 
 	t.Run("failed connect", func(t *testing.T) {
-		conn := &mockConn{
-			readBuf:  &bytes.Buffer{},
-			writeBuf: &bytes.Buffer{},
-		}
+		conn := testutil.NewMockConn()
 
 		dialTCP := func(addr string) (net.Conn, error) {
 			return nil, errors.New("connection refused")
@@ -236,7 +226,7 @@ func TestHandleConnectCommand(t *testing.T) {
 		handleConnectCommand(conn, "example.com:80", "127.0.0.1:12345", dialTCP)
 
 		// Check error response
-		resp := conn.writeBuf.Bytes()
+		resp := conn.WriteBuf.Bytes()
 		if len(resp) < 10 || resp[0] != 0x05 || resp[1] != 0x05 {
 			t.Errorf("Invalid error response: %v", resp)
 		}
@@ -246,13 +236,10 @@ func TestHandleConnectCommand(t *testing.T) {
 // TestHandleUDPAssociate tests UDP ASSOCIATE handling
 func TestHandleUDPAssociate(t *testing.T) {
 	t.Run("successful UDP associate IPv4", func(t *testing.T) {
-		conn := &mockConn{
-			readBuf:  &bytes.Buffer{},
-			writeBuf: &bytes.Buffer{},
-		}
+		conn := testutil.NewMockConn()
 
 		udpAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5000}
-		closer := &mockCloser{}
+		closer := testutil.NewMockCloser()
 
 		dialUDP := func() (net.Addr, io.Closer, error) {
 			return udpAddr, closer, nil
@@ -262,7 +249,7 @@ func TestHandleUDPAssociate(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		// Check response
-		resp := conn.writeBuf.Bytes()
+		resp := conn.WriteBuf.Bytes()
 		if len(resp) < 10 || resp[0] != 0x05 || resp[1] != 0x00 {
 			t.Errorf("Invalid UDP associate response: %v", resp)
 		}
@@ -271,13 +258,10 @@ func TestHandleUDPAssociate(t *testing.T) {
 	})
 
 	t.Run("successful UDP associate IPv6", func(t *testing.T) {
-		conn := &mockConn{
-			readBuf:  &bytes.Buffer{},
-			writeBuf: &bytes.Buffer{},
-		}
+		conn := testutil.NewMockConn()
 
 		udpAddr := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 5000}
-		closer := &mockCloser{}
+		closer := testutil.NewMockCloser()
 
 		dialUDP := func() (net.Addr, io.Closer, error) {
 			return udpAddr, closer, nil
@@ -287,7 +271,7 @@ func TestHandleUDPAssociate(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 
 		// Check response
-		resp := conn.writeBuf.Bytes()
+		resp := conn.WriteBuf.Bytes()
 		if len(resp) < 22 || resp[0] != 0x05 || resp[1] != 0x00 || resp[3] != 0x04 {
 			t.Errorf("Invalid UDP associate IPv6 response: %v", resp)
 		}
@@ -296,10 +280,7 @@ func TestHandleUDPAssociate(t *testing.T) {
 	})
 
 	t.Run("failed UDP associate", func(t *testing.T) {
-		conn := &mockConn{
-			readBuf:  &bytes.Buffer{},
-			writeBuf: &bytes.Buffer{},
-		}
+		conn := testutil.NewMockConn()
 
 		dialUDP := func() (net.Addr, io.Closer, error) {
 			return nil, nil, errors.New("bind failed")
@@ -308,7 +289,7 @@ func TestHandleUDPAssociate(t *testing.T) {
 		handleUDPAssociate(conn, "127.0.0.1:12345", dialUDP)
 
 		// Check error response
-		resp := conn.writeBuf.Bytes()
+		resp := conn.WriteBuf.Bytes()
 		if len(resp) < 10 || resp[0] != 0x05 || resp[1] != 0x05 {
 			t.Errorf("Invalid error response: %v", resp)
 		}
@@ -528,10 +509,8 @@ func TestHandleSOCKS5Client(t *testing.T) {
 			0x00, 0x50,
 		}
 
-		conn := &mockConn{
-			readBuf:  bytes.NewBuffer(data),
-			writeBuf: &bytes.Buffer{},
-		}
+		conn := testutil.NewMockConn()
+		conn.ReadBuf = bytes.NewBuffer(data)
 
 		dialTCP := func(addr string) (net.Conn, error) {
 			return nil, errors.New("should not be called")
@@ -544,7 +523,7 @@ func TestHandleSOCKS5Client(t *testing.T) {
 		handleSOCKS5Client(conn, dialTCP, dialUDP)
 
 		// Check that unsupported command response was sent
-		resp := conn.writeBuf.Bytes()
+		resp := conn.WriteBuf.Bytes()
 		if len(resp) < 12 {
 			t.Errorf("Response too short: %v", resp)
 			return
@@ -556,96 +535,220 @@ func TestHandleSOCKS5Client(t *testing.T) {
 	})
 }
 
-// mockConn implements net.Conn for testing
-type mockConn struct {
-	readBuf  *bytes.Buffer
-	writeBuf *bytes.Buffer
-	closed   bool
-}
+// TestServeSOCKS5_ContextCancellation tests that ServeSOCKS5 shuts down cleanly on context cancellation
+func TestServeSOCKS5_ContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
 
-func (m *mockConn) Read(b []byte) (n int, err error) {
-	if m.closed {
-		return 0, io.EOF
+	dialTCP := func(addr string) (net.Conn, error) {
+		return nil, errors.New("should not be called")
 	}
-	return m.readBuf.Read(b)
-}
 
-func (m *mockConn) Write(b []byte) (n int, err error) {
-	if m.closed {
-		return 0, errors.New("connection closed")
+	dialUDP := func() (net.Addr, io.Closer, error) {
+		return nil, nil, errors.New("should not be called")
 	}
-	return m.writeBuf.Write(b)
-}
 
-func (m *mockConn) Close() error {
-	m.closed = true
-	return nil
-}
+	errChan := make(chan error, 1)
+	go func() {
+		errChan <- ServeSOCKS5(ctx, "127.0.0.1:0", dialTCP, dialUDP)
+	}()
 
-func (m *mockConn) LocalAddr() net.Addr {
-	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1080}
-}
+	// Give the server time to start
+	time.Sleep(50 * time.Millisecond)
 
-func (m *mockConn) RemoteAddr() net.Addr {
-	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
-}
+	// Cancel the context
+	cancel()
 
-func (m *mockConn) SetDeadline(t time.Time) error {
-	return nil
-}
-
-func (m *mockConn) SetReadDeadline(t time.Time) error {
-	return nil
-}
-
-func (m *mockConn) SetWriteDeadline(t time.Time) error {
-	return nil
-}
-
-// mockCloser implements io.Closer for testing
-type mockCloser struct {
-	closed bool
-}
-
-func (m *mockCloser) Close() error {
-	m.closed = true
-	return nil
-}
-
-// mockSSHChannel implements ssh.Channel for testing
-type mockSSHChannel struct {
-	readBuf  *bytes.Buffer
-	writeBuf *bytes.Buffer
-	closed   bool
-}
-
-func (m *mockSSHChannel) Read(data []byte) (int, error) {
-	if m.closed {
-		return 0, io.EOF
+	// Wait for shutdown
+	select {
+	case err := <-errChan:
+		if err != nil && err != context.Canceled {
+			t.Errorf("Expected nil or context.Canceled error on clean shutdown, got %v", err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Error("ServeSOCKS5 did not shut down after context cancellation")
 	}
-	return m.readBuf.Read(data)
 }
 
-func (m *mockSSHChannel) Write(data []byte) (int, error) {
-	if m.closed {
-		return 0, errors.New("channel closed")
+// TestSOCKS5_ConcurrentRequests tests handling multiple concurrent SOCKS5 connections
+func TestSOCKS5_ConcurrentRequests(t *testing.T) {
+	const numRequests = 10
+
+	dialTCP := func(addr string) (net.Conn, error) {
+		// Return a mock connection
+		return testutil.NewMockConn(), nil
 	}
-	return m.writeBuf.Write(data)
+
+	dialUDP := func() (net.Addr, io.Closer, error) {
+		return nil, nil, errors.New("UDP not supported in this test")
+	}
+
+	// Test concurrent CONNECT requests
+	var wg sync.WaitGroup
+	for i := 0; i < numRequests; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			// Handshake + CONNECT request
+			data := []byte{
+				// Handshake
+				0x05, 0x01, 0x00,
+				// Request
+				0x05, 0x01, 0x00, 0x01, // CONNECT
+				192, 168, 1, 1,
+				0x00, 0x50,
+			}
+
+			conn := testutil.NewMockConn()
+			conn.ReadBuf = bytes.NewBuffer(data)
+
+			handleSOCKS5Client(conn, dialTCP, dialUDP)
+		}()
+	}
+
+	// Wait for all requests to complete
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Success
+	case <-time.After(5 * time.Second):
+		t.Error("Concurrent requests did not complete in time")
+	}
 }
 
-func (m *mockSSHChannel) Close() error {
-	m.closed = true
-	return nil
+// TestSOCKS5_LargeDataTransfer tests handling of large data transfers
+func TestSOCKS5_LargeDataTransfer(t *testing.T) {
+	// Create a large payload (10KB)
+	largePayload := make([]byte, 10*1024)
+	for i := range largePayload {
+		largePayload[i] = byte(i % 256)
+	}
+
+	// Test with UDP header parsing
+	header := []byte{
+		0x00, 0x00, // RSV
+		0x00,           // FRAG
+		0x01,           // ATYP (IPv4)
+		192, 168, 1, 1, // Address
+		0x00, 0x50, // Port
+	}
+
+	fullData := append(header, largePayload...)
+
+	target, payload, parsedHeader, err := parseSOCKS5UDPHeader(fullData)
+	if err != nil {
+		t.Fatalf("parseSOCKS5UDPHeader() failed with large payload: %v", err)
+	}
+
+	if target != "192.168.1.1:80" {
+		t.Errorf("parseSOCKS5UDPHeader() target = %v, want 192.168.1.1:80", target)
+	}
+
+	if !bytes.Equal(payload, largePayload) {
+		t.Error("parseSOCKS5UDPHeader() payload corrupted for large data")
+	}
+
+	if parsedHeader == nil {
+		t.Error("parseSOCKS5UDPHeader() header is nil")
+	}
 }
 
-func (m *mockSSHChannel) CloseWrite() error {
-	return nil
-}
+// TestSOCKS5_IPv6Handling tests IPv6 address handling in SOCKS5
+func TestSOCKS5_IPv6Handling(t *testing.T) {
+	tests := []struct {
+		name       string
+		request    []byte
+		wantTarget string
+		wantCmd    byte
+		wantErr    bool
+	}{
+		{
+			name: "valid IPv6 CONNECT",
+			request: []byte{
+				0x05, 0x01, 0x00, 0x04, // CONNECT, IPv6
+				0x20, 0x01, 0x0d, 0xb8, // 2001:db8::1
+				0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x00,
+				0x00, 0x00, 0x00, 0x01,
+				0x00, 0x50, // Port 80
+			},
+			wantTarget: "[2001:db8::1]:80",
+			wantCmd:    config.SOCKS5CommandConnect,
+			wantErr:    false,
+		},
+		{
+			name: "truncated IPv6 address",
+			request: []byte{
+				0x05, 0x01, 0x00, 0x04, // CONNECT, IPv6
+				0x20, 0x01, 0x0d, 0xb8, // Incomplete address
+			},
+			wantErr: true,
+		},
+	}
 
-func (m *mockSSHChannel) SendRequest(name string, wantReply bool, payload []byte) (bool, error) {
-	return true, nil
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := testutil.NewMockConn()
+			conn.ReadBuf = bytes.NewBuffer(tt.request)
 
-func (m *mockSSHChannel) Stderr() io.ReadWriter {
-	return m
+			cmd, target, err := parseSOCKS5Request(conn)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Error("parseSOCKS5Request() expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("parseSOCKS5Request() unexpected error: %v", err)
+				return
+			}
+
+			if cmd != tt.wantCmd {
+				t.Errorf("parseSOCKS5Request() cmd = %v, want %v", cmd, tt.wantCmd)
+			}
+
+			if target != tt.wantTarget {
+				t.Errorf("parseSOCKS5Request() target = %v, want %v", target, tt.wantTarget)
+			}
+		})
+	}
+
+	// Test IPv6 in UDP header
+	t.Run("IPv6 UDP header", func(t *testing.T) {
+		header := []byte{
+			0x00, 0x00, // RSV
+			0x00,                   // FRAG
+			0x04,                   // ATYP (IPv6)
+			0x20, 0x01, 0x0d, 0xb8, // 2001:db8::1
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x00,
+			0x00, 0x00, 0x00, 0x01,
+			0x00, 0x50, // Port 80
+			0x01, 0x02, 0x03, // Payload
+		}
+
+		target, payload, parsedHeader, err := parseSOCKS5UDPHeader(header)
+		if err != nil {
+			t.Fatalf("parseSOCKS5UDPHeader() failed for IPv6: %v", err)
+		}
+
+		if target != "[2001:db8::1]:80" {
+			t.Errorf("parseSOCKS5UDPHeader() target = %v, want [2001:db8::1]:80", target)
+		}
+
+		if !bytes.Equal(payload, []byte{0x01, 0x02, 0x03}) {
+			t.Errorf("parseSOCKS5UDPHeader() payload = %v, want [1 2 3]", payload)
+		}
+
+		if parsedHeader == nil {
+			t.Error("parseSOCKS5UDPHeader() header is nil")
+		}
+	})
 }

@@ -12,6 +12,29 @@ import (
 	"uproxy/internal/uproxy"
 )
 
+// SOCKS5 error codes
+const (
+	socks5Success                  = 0x00
+	socks5ErrorGeneralFailure      = 0x05
+	socks5ErrorCommandNotSupported = 0x07
+)
+
+// writeSOCKS5Error writes a SOCKS5 error response to the connection
+func writeSOCKS5Error(conn net.Conn, errorCode byte) {
+	response := []byte{0x05, errorCode, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
+	if _, err := conn.Write(response); err != nil {
+		common.LogDebug("socks5", "Failed to send error response", "error", err, "errorCode", errorCode)
+	}
+}
+
+// writeSOCKS5Success writes a SOCKS5 success response to the connection
+func writeSOCKS5Success(conn net.Conn) {
+	response := []byte{0x05, socks5Success, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
+	if _, err := conn.Write(response); err != nil {
+		common.LogDebug("socks5", "Failed to send success response", "error", err)
+	}
+}
+
 // ServeSOCKS5 binds the local listening port and dispatches SOCKS5 requests
 func ServeSOCKS5(ctx context.Context, listenAddr string, dialTCP func(addr string) (net.Conn, error), dialUDP func() (net.Addr, io.Closer, error)) error {
 	listener, err := net.Listen("tcp", listenAddr)
@@ -53,12 +76,12 @@ func handleSOCKS5Client(conn net.Conn, dialTCP func(string) (net.Conn, error), d
 	}
 
 	switch cmd {
-	case 1: // CONNECT (TCP)
+	case config.SOCKS5CommandConnect: // CONNECT (TCP)
 		handleConnectCommand(conn, targetAddr, clientAddr, dialTCP)
-	case 3: // UDP ASSOCIATE
+	case config.SOCKS5CommandUDPAssociate: // UDP ASSOCIATE
 		handleUDPAssociate(conn, clientAddr, dialUDP)
 	default: // Command not supported
-		conn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		writeSOCKS5Error(conn, socks5ErrorCommandNotSupported)
 	}
 }
 
@@ -137,13 +160,13 @@ func handleConnectCommand(conn net.Conn, targetAddr, clientAddr string, dialTCP 
 	remote, err := dialTCP(targetAddr)
 	if err != nil {
 		common.LogError("socks5", "TCP Connect failed", "client", clientAddr, "target", targetAddr, "error", err)
-		conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		writeSOCKS5Error(conn, socks5ErrorGeneralFailure)
 		return
 	}
 	defer remote.Close()
 
 	// Success reply
-	conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+	writeSOCKS5Success(conn)
 
 	// Delegate to ProxyBidi for telemetry
 	uproxy.ProxyBidi(context.Background(), conn, remote, "socks5_client_tcp", targetAddr, config.DefaultTCPBufSize)
@@ -154,7 +177,7 @@ func handleUDPAssociate(conn net.Conn, clientAddr string, dialUDP func() (net.Ad
 	udpAddr, udpCloser, err := dialUDP()
 	if err != nil {
 		common.LogError("socks5", "UDP Associate failed", "client", clientAddr, "error", err)
-		conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		writeSOCKS5Error(conn, socks5ErrorGeneralFailure)
 		return
 	}
 	defer udpCloser.Close()

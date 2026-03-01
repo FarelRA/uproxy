@@ -26,7 +26,8 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 
 	var txBytes, rxBytes int64
 
-	g, _ := errgroup.WithContext(ctx)
+	g, gctx := errgroup.WithContext(ctx)
+	_ = gctx // Context available for future use
 
 	// Stream: A -> B
 	g.Go(func() error {
@@ -34,7 +35,9 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 		n, err := io.CopyBuffer(a, b, buf)
 		txBytes = n
 
-		_ = a.Close()
+		if closeErr := a.Close(); closeErr != nil {
+			slog.Debug("Failed to close connection A", "layer", "proxy", "error", closeErr)
+		}
 		return err
 	})
 
@@ -44,7 +47,9 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 		n, err := io.CopyBuffer(b, a, buf)
 		rxBytes = n
 
-		_ = b.Close()
+		if closeErr := b.Close(); closeErr != nil {
+			slog.Debug("Failed to close connection B", "layer", "proxy", "error", closeErr)
+		}
 		return err
 	})
 

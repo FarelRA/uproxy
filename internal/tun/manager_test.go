@@ -1,51 +1,11 @@
 package tun
 
 import (
-	"errors"
-	"io"
 	"sync"
 	"testing"
+
+	"uproxy/internal/testutil"
 )
-
-// mockSSHChannel implements ssh.Channel for testing
-type mockSSHChannel struct {
-	data   []byte
-	closed bool
-	mu     sync.Mutex
-}
-
-func (m *mockSSHChannel) Read(data []byte) (int, error) {
-	return 0, nil
-}
-
-func (m *mockSSHChannel) Write(data []byte) (int, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		return 0, errors.New("channel closed")
-	}
-	m.data = append(m.data, data...)
-	return len(data), nil
-}
-
-func (m *mockSSHChannel) Close() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.closed = true
-	return nil
-}
-
-func (m *mockSSHChannel) CloseWrite() error {
-	return nil
-}
-
-func (m *mockSSHChannel) SendRequest(name string, wantReply bool, payload []byte) (bool, error) {
-	return false, nil
-}
-
-func (m *mockSSHChannel) Stderr() io.ReadWriter {
-	return nil
-}
 
 // TestAllocateIP tests IP allocation through TUNManager
 func TestAllocateIP(t *testing.T) {
@@ -88,7 +48,7 @@ func TestRegisterClient(t *testing.T) {
 		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
 	}
 
-	channel := &mockSSHChannel{}
+	channel := testutil.NewMockSSHChannel()
 	ipv4 := "10.0.0.2"
 	ipv6 := "fd00::2/64"
 
@@ -127,7 +87,7 @@ func TestUnregisterClient(t *testing.T) {
 		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
 	}
 
-	channel := &mockSSHChannel{}
+	channel := testutil.NewMockSSHChannel()
 	ipv4 := "10.0.0.2"
 	ipv6 := "fd00::2/64"
 
@@ -176,7 +136,7 @@ func TestConcurrentClientOperations(t *testing.T) {
 				return
 			}
 
-			channel := &mockSSHChannel{}
+			channel := testutil.NewMockSSHChannel()
 			route := mgr.RegisterClient(ipv4, ipv6, channel)
 			if route == nil {
 				t.Error("RegisterClient returned nil")
@@ -209,7 +169,7 @@ func TestRegisterUnregisterCycle(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		// Register
-		channel := &mockSSHChannel{}
+		channel := testutil.NewMockSSHChannel()
 		route := mgr.RegisterClient(ipv4, ipv6, channel)
 		if route == nil {
 			t.Fatalf("Iteration %d: RegisterClient failed", i)
@@ -254,7 +214,7 @@ func TestMultipleClientsWithDifferentIPs(t *testing.T) {
 
 	// Register all clients
 	for _, c := range clients {
-		channel := &mockSSHChannel{}
+		channel := testutil.NewMockSSHChannel()
 		route := mgr.RegisterClient(c.ipv4, c.ipv6, channel)
 		if route == nil {
 			t.Fatalf("Failed to register client %s", c.ipv4)
@@ -322,7 +282,7 @@ func BenchmarkRegisterClient(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ipv4, ipv6, _ := mgr.AllocateIP()
-		channel := &mockSSHChannel{}
+		channel := testutil.NewMockSSHChannel()
 		mgr.RegisterClient(ipv4, ipv6, channel)
 	}
 }
@@ -338,7 +298,7 @@ func BenchmarkConcurrentRegister(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			ipv4, ipv6, _ := mgr.AllocateIP()
-			channel := &mockSSHChannel{}
+			channel := testutil.NewMockSSHChannel()
 			mgr.RegisterClient(ipv4, ipv6, channel)
 		}
 	})

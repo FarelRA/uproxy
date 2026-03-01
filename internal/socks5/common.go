@@ -3,8 +3,6 @@ package socks5
 import (
 	"encoding/binary"
 	"io"
-
-	"uproxy/internal/framing"
 )
 
 // SSH Channel names used for multiplexing
@@ -12,18 +10,6 @@ const (
 	ChannelTypeTCP = "socks5-tcp"
 	ChannelTypeUDP = "socks5-udp"
 )
-
-// WriteFramed writes a length-prefixed byte slice to the writer
-// Deprecated: Use framing.WriteFramed directly
-func WriteFramed(w io.Writer, data []byte) error {
-	return framing.WriteFramed(w, data)
-}
-
-// ReadFramed reads a length-prefixed byte slice from the reader
-// Deprecated: Use framing.ReadFramed directly
-func ReadFramed(r io.Reader) ([]byte, error) {
-	return framing.ReadFramed(r)
-}
 
 // WriteTargetHeader writes the target address to the SSH channel during initialization
 func WriteTargetHeader(w io.Writer, target string) error {

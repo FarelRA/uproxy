@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/ssh"
-
 	"uproxy/internal/common"
+	"uproxy/internal/framing"
 	"uproxy/internal/uproxy"
 )
 
@@ -60,12 +60,18 @@ func parseSOCKS5UDPHeader(data []byte) (target string, payload []byte, header []
 	return target, data[idx:], data[:idx], nil
 }
 
+// udpSessionManager manages UDP sessions for SOCKS5 UDP ASSOCIATE requests.
+// It maintains a mapping of target addresses to SSH channels, allowing multiple
+// UDP destinations to be multiplexed over a single UDP socket. The manager handles
+// session creation, reuse, and cleanup for efficient UDP proxying.
+//
+// Thread-safe: All public methods use mutex locking to ensure concurrent access safety.
 type udpSessionManager struct {
-	sessions   map[string]ssh.Channel
-	mu         sync.Mutex
-	clientAddr *net.UDPAddr
-	sshClient  *ssh.Client
-	conn       *net.UDPConn
+	sessions   map[string]ssh.Channel // Maps target addresses to SSH channels
+	mu         sync.Mutex             // Protects sessions and clientAddr
+	clientAddr *net.UDPAddr           // Client's UDP address for sending responses
+	sshClient  *ssh.Client            // SSH client for creating new channels
+	conn       *net.UDPConn           // Local UDP socket for client communication
 }
 
 func newUDPSessionManager(sshClient *ssh.Client, conn *net.UDPConn) *udpSessionManager {
@@ -125,7 +131,7 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 	}()
 
 	for {
-		data, err := ReadFramed(ch)
+		data, err := framing.ReadFramed(ch)
 		if err != nil {
 			return
 		}
@@ -141,7 +147,9 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 		m.mu.Unlock()
 
 		if cAddr != nil {
-			m.conn.WriteToUDP(pkt, cAddr)
+			if _, err := m.conn.WriteToUDP(pkt, cAddr); err != nil {
+				common.LogDebug("socks5_udp", "Failed to write UDP packet to client", "error", err)
+			}
 		}
 	}
 }
@@ -189,11 +197,61 @@ func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error
 				continue
 			}
 
-			WriteFramed(channel, payload)
+			if err := framing.WriteFramed(channel, payload); err != nil {
+				common.LogDebug("socks5_udp", "Failed to write framed data to channel", "target", targetStr, "error", err)
+			}
 		}
 	}()
 
 	return conn.LocalAddr(), conn, nil
+}
+
+// createUDPDialer creates a net.Dialer configured for UDP with optional interface binding.
+func createUDPDialer(outbound string, dialTimeout time.Duration) *net.Dialer {
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	if outbound != "" {
+		// Try to get IP from interface (supports both IPv4 and IPv6)
+		ip, err := uproxy.FirstIPOfInterface(outbound)
+		if err == nil {
+			dialer.LocalAddr = &net.UDPAddr{IP: ip, Port: 0}
+		}
+	}
+	return dialer
+}
+
+// proxyUDPBidirectional handles bidirectional UDP forwarding between SSH channel and UDP connection.
+func proxyUDPBidirectional(channel ssh.Channel, conn net.Conn, targetAddr string) (txBytes, rxBytes int64) {
+	const udpTimeout = 5 * time.Minute
+
+	// SSH -> Internet (TX)
+	go func() {
+		for {
+			data, err := framing.ReadFramed(channel)
+			if err != nil {
+				return
+			}
+			n, _ := conn.Write(data)
+			txBytes += int64(n)
+			conn.SetReadDeadline(time.Now().Add(udpTimeout))
+		}
+	}()
+
+	// Internet -> SSH (RX)
+	bufPtr := getUDPBuffer()
+	defer putUDPBuffer(bufPtr)
+	buf := *bufPtr
+	for {
+		conn.SetReadDeadline(time.Now().Add(udpTimeout))
+		n, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
+
+		if err := framing.WriteFramed(channel, buf[:n]); err != nil {
+			return
+		}
+		rxBytes += int64(n)
+	}
 }
 
 // HandleUDP runs on the server side to handle an incoming UDP SSH channel.
@@ -206,15 +264,7 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 		return
 	}
 
-	dialer := &net.Dialer{Timeout: dialTimeout}
-	if outbound != "" {
-		// Try to get IP from interface (supports both IPv4 and IPv6)
-		ip, err := uproxy.FirstIPOfInterface(outbound)
-		if err == nil {
-			dialer.LocalAddr = &net.UDPAddr{IP: ip, Port: 0}
-		}
-	}
-
+	dialer := createUDPDialer(outbound, dialTimeout)
 	conn, err := dialer.DialContext(ctx, "udp", targetAddr)
 	if err != nil {
 		common.LogError("ssh_udp", "Failed to dial UDP target", "target", targetAddr, "error", err)
@@ -227,39 +277,9 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 	}
 
 	start := time.Now()
-	var txBytes, rxBytes int64
 	common.LogInfo("socks5_udp", "UDP Stream started", "role", "server", "target", targetAddr)
-	defer func() {
-		common.LogInfo("socks5_udp", "UDP Stream closed", "role", "server", "target", targetAddr, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
-	}()
 
-	// SSH -> Internet (TX)
-	go func() {
-		for {
-			data, err := ReadFramed(channel)
-			if err != nil {
-				return
-			}
-			n, _ := conn.Write(data)
-			txBytes += int64(n)
-			conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-		}
-	}()
+	txBytes, rxBytes := proxyUDPBidirectional(channel, conn, targetAddr)
 
-	// Internet -> SSH (RX)
-	bufPtr := getUDPBuffer()
-	defer putUDPBuffer(bufPtr)
-	buf := *bufPtr
-	for {
-		conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-		n, err := conn.Read(buf)
-		if err != nil {
-			return
-		}
-
-		if err := WriteFramed(channel, buf[:n]); err != nil {
-			return
-		}
-		rxBytes += int64(n)
-	}
+	common.LogInfo("socks5_udp", "UDP Stream closed", "role", "server", "target", targetAddr, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
 }

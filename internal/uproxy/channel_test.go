@@ -1,57 +1,15 @@
 package uproxy
 
 import (
-	"io"
 	"net"
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/ssh"
+	"uproxy/internal/testutil"
 )
 
-type mockChannel struct {
-	ssh.Channel
-	readData  []byte
-	writeData []byte
-	closed    bool
-}
-
-func (m *mockChannel) Read(data []byte) (int, error) {
-	if len(m.readData) == 0 {
-		return 0, nil
-	}
-	n := copy(data, m.readData)
-	m.readData = m.readData[n:]
-	return n, nil
-}
-
-func (m *mockChannel) Write(data []byte) (int, error) {
-	m.writeData = append(m.writeData, data...)
-	return len(data), nil
-}
-
-func (m *mockChannel) Close() error {
-	m.closed = true
-	return nil
-}
-
-func (m *mockChannel) CloseWrite() error {
-	return nil
-}
-
-func (m *mockChannel) SendRequest(name string, wantReply bool, payload []byte) (bool, error) {
-	return true, nil
-}
-
-func (m *mockChannel) Stderr() io.ReadWriter {
-	return nil
-}
-
 func TestNewChannelConn(t *testing.T) {
-	mockCh := &mockChannel{
-		readData: []byte("test data"),
-	}
-
+	mockCh := testutil.NewMockSSHChannel()
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 5678}
 
@@ -61,34 +19,40 @@ func TestNewChannelConn(t *testing.T) {
 		t.Fatal("Expected non-nil ChannelConn")
 	}
 
-	// Verify channel is set (can't directly compare interface)
-	if conn.Channel == nil {
-		t.Error("Channel not set correctly")
+	if conn.LocalAddr() != localAddr {
+		t.Errorf("Expected local address %v, got %v", localAddr, conn.LocalAddr())
 	}
 
-	if conn.localAddr != localAddr {
-		t.Error("Local address not set correctly")
-	}
-
-	if conn.remoteAddr != remoteAddr {
-		t.Error("Remote address not set correctly")
+	if conn.RemoteAddr() != remoteAddr {
+		t.Errorf("Expected remote address %v, got %v", remoteAddr, conn.RemoteAddr())
 	}
 }
 
-func TestChannelConnLocalAddr(t *testing.T) {
-	mockCh := &mockChannel{}
+func TestChannelConnRead(t *testing.T) {
+	mockCh := testutil.NewMockSSHChannel()
+	mockCh.ReadBuf.Write([]byte("test data"))
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 5678}
 
 	conn := NewChannelConn(mockCh, localAddr, remoteAddr)
 
-	if conn.LocalAddr() != localAddr {
-		t.Errorf("Expected local address %v, got %v", localAddr, conn.LocalAddr())
+	buf := make([]byte, 100)
+	n, err := conn.Read(buf)
+	if err != nil {
+		t.Errorf("Expected no error, got %v", err)
+	}
+
+	if n != 9 {
+		t.Errorf("Expected to read 9 bytes, got %d", n)
+	}
+
+	if string(buf[:n]) != "test data" {
+		t.Errorf("Expected 'test data', got '%s'", string(buf[:n]))
 	}
 }
 
 func TestChannelConnRemoteAddr(t *testing.T) {
-	mockCh := &mockChannel{}
+	mockCh := testutil.NewMockSSHChannel()
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 5678}
 
@@ -100,7 +64,7 @@ func TestChannelConnRemoteAddr(t *testing.T) {
 }
 
 func TestChannelConnSetDeadline(t *testing.T) {
-	mockCh := &mockChannel{}
+	mockCh := testutil.NewMockSSHChannel()
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 5678}
 
@@ -114,7 +78,7 @@ func TestChannelConnSetDeadline(t *testing.T) {
 }
 
 func TestChannelConnSetReadDeadline(t *testing.T) {
-	mockCh := &mockChannel{}
+	mockCh := testutil.NewMockSSHChannel()
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 5678}
 
@@ -128,7 +92,7 @@ func TestChannelConnSetReadDeadline(t *testing.T) {
 }
 
 func TestChannelConnSetWriteDeadline(t *testing.T) {
-	mockCh := &mockChannel{}
+	mockCh := testutil.NewMockSSHChannel()
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 5678}
 
@@ -143,9 +107,8 @@ func TestChannelConnSetWriteDeadline(t *testing.T) {
 
 func TestChannelConnReadWrite(t *testing.T) {
 	testData := []byte("hello world")
-	mockCh := &mockChannel{
-		readData: testData,
-	}
+	mockCh := testutil.NewMockSSHChannel()
+	mockCh.ReadBuf.Write(testData)
 
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 5678}
@@ -174,13 +137,13 @@ func TestChannelConnReadWrite(t *testing.T) {
 	if n != len(writeData) {
 		t.Errorf("Expected to write %d bytes, got %d", len(writeData), n)
 	}
-	if string(mockCh.writeData) != string(writeData) {
-		t.Errorf("Expected %q, got %q", writeData, mockCh.writeData)
+	if string(mockCh.WriteBuf.Bytes()) != string(writeData) {
+		t.Errorf("Expected %q, got %q", writeData, mockCh.WriteBuf.Bytes())
 	}
 }
 
 func TestChannelConnClose(t *testing.T) {
-	mockCh := &mockChannel{}
+	mockCh := testutil.NewMockSSHChannel()
 	localAddr := &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 1234}
 	remoteAddr := &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 5678}
 
@@ -191,7 +154,7 @@ func TestChannelConnClose(t *testing.T) {
 		t.Errorf("Close failed: %v", err)
 	}
 
-	if !mockCh.closed {
+	if !mockCh.Closed {
 		t.Error("Expected channel to be closed")
 	}
 }

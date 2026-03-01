@@ -17,6 +17,20 @@ import (
 // homeDirFunc is a variable for dependency injection in tests
 var homeDirFunc = os.UserHomeDir
 
+// resolveSSHDir resolves the SSH directory path.
+// If sshDir is provided, it returns that directory.
+// Otherwise, it returns ~/.ssh directory.
+func resolveSSHDir(sshDir string) (string, error) {
+	if sshDir != "" {
+		return sshDir, nil
+	}
+	home, err := homeDirFunc()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	}
+	return filepath.Join(home, ".ssh"), nil
+}
+
 // LoadPrivateKey attempts to load the SSH client identity file.
 // If privateKeyPath is specified, it loads that specific file.
 // If sshDir is specified, it looks for id_ed25519 or id_rsa in that directory.
@@ -29,13 +43,9 @@ func LoadPrivateKey(sshDir, privateKeyPath string) (ssh.Signer, error) {
 		paths = []string{privateKeyPath}
 	} else {
 		// Determine SSH directory
-		dir := sshDir
-		if dir == "" {
-			home, err := homeDirFunc()
-			if err != nil {
-				return nil, fmt.Errorf("failed to get user home directory: %w", err)
-			}
-			dir = filepath.Join(home, ".ssh")
+		dir, err := resolveSSHDir(sshDir)
+		if err != nil {
+			return nil, err
 		}
 
 		// Try common key names in order of preference
@@ -78,13 +88,9 @@ func LoadPrivateKey(sshDir, privateKeyPath string) (ssh.Signer, error) {
 func CheckAuthorizedKeys(pubKey ssh.PublicKey, sshDir, authorizedKeysPath string) error {
 	authFile := authorizedKeysPath
 	if authFile == "" {
-		dir := sshDir
-		if dir == "" {
-			home, err := homeDirFunc()
-			if err != nil {
-				return fmt.Errorf("failed to get user home directory: %w", err)
-			}
-			dir = filepath.Join(home, ".ssh")
+		dir, err := resolveSSHDir(sshDir)
+		if err != nil {
+			return err
 		}
 		authFile = filepath.Join(dir, "authorized_keys")
 	}
@@ -117,13 +123,9 @@ func CheckAuthorizedKeys(pubKey ssh.PublicKey, sshDir, authorizedKeysPath string
 func VerifyKnownHost(address string, remote net.Addr, pubKey ssh.PublicKey, sshDir, knownHostsPath string) error {
 	khPath := knownHostsPath
 	if khPath == "" {
-		dir := sshDir
-		if dir == "" {
-			home, err := homeDirFunc()
-			if err != nil {
-				return fmt.Errorf("failed to get user home directory: %w", err)
-			}
-			dir = filepath.Join(home, ".ssh")
+		dir, err := resolveSSHDir(sshDir)
+		if err != nil {
+			return err
 		}
 		khPath = filepath.Join(dir, "known_hosts")
 	}

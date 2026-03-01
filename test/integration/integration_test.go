@@ -73,9 +73,9 @@ func TestValidationWithNetworkDiagnostics(t *testing.T) {
 
 // TestPacketValidationFlow tests packet validation integration
 func TestPacketValidationFlow(t *testing.T) {
-	// Test IPv4 packet validation
+	// Test IPv4 packet validation (20 byte header, no payload)
 	ipv4Packet := []byte{
-		0x45, 0x00, 0x00, 0x3c, // Version, IHL, TOS, Total Length
+		0x45, 0x00, 0x00, 0x14, // Version, IHL, TOS, Total Length (20 bytes)
 		0x1c, 0x46, 0x40, 0x00, // ID, Flags, Fragment Offset
 		0x40, 0x06, 0xb1, 0xe6, // TTL, Protocol, Checksum
 		0xc0, 0xa8, 0x00, 0x01, // Source IP
@@ -86,10 +86,10 @@ func TestPacketValidationFlow(t *testing.T) {
 		t.Error("Valid IPv4 packet rejected")
 	}
 
-	// Test IPv6 packet validation
+	// Test IPv6 packet validation (with no payload, so payload length = 0)
 	ipv6Packet := []byte{
 		0x60, 0x00, 0x00, 0x00, // Version, Traffic Class, Flow Label
-		0x00, 0x14, 0x06, 0x40, // Payload Length, Next Header, Hop Limit
+		0x00, 0x00, 0x06, 0x40, // Payload Length (0), Next Header, Hop Limit
 		0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Source IP (first 8 bytes)
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, // Source IP (last 8 bytes)
 		0xfd, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Dest IP (first 8 bytes)
