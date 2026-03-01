@@ -3,8 +3,11 @@ package network
 import (
 	"context"
 	"log/slog"
+	"net"
 	"os"
 	"testing"
+
+	"uproxy/internal/routing"
 )
 
 func TestFailureType_String(t *testing.T) {
@@ -170,5 +173,301 @@ func BenchmarkNewDiagnostics(b *testing.B) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	for i := 0; i < b.N; i++ {
 		_ = NewDiagnostics("example.com:443", logger)
+	}
+}
+
+// mockNetworkOps is a mock implementation of networkOps for testing
+type mockNetworkOps struct {
+	getRouteToHostFunc  func(ctx context.Context, host string) (*routing.RouteInfo, error)
+	interfaceByNameFunc func(name string) (*net.Interface, error)
+	pingGatewayFunc     func(ctx context.Context, gateway string) error
+}
+
+func (m *mockNetworkOps) GetRouteToHost(ctx context.Context, host string) (*routing.RouteInfo, error) {
+	if m.getRouteToHostFunc != nil {
+		return m.getRouteToHostFunc(ctx, host)
+	}
+	return nil, context.DeadlineExceeded
+}
+
+func (m *mockNetworkOps) InterfaceByName(name string) (*net.Interface, error) {
+	if m.interfaceByNameFunc != nil {
+		return m.interfaceByNameFunc(name)
+	}
+	return nil, os.ErrNotExist
+}
+
+func (m *mockNetworkOps) PingGateway(ctx context.Context, gateway string) error {
+	if m.pingGatewayFunc != nil {
+		return m.pingGatewayFunc(ctx, gateway)
+	}
+	return context.DeadlineExceeded
+}
+
+func TestDiagnoseFailure_NoNetwork(t *testing.T) {
+	// Save original netOps and restore after test
+	originalNetOps := netOps
+	defer func() { netOps = originalNetOps }()
+
+	// Mock that returns error for route lookup
+	netOps = &mockNetworkOps{
+		getRouteToHostFunc: func(ctx context.Context, host string) (*routing.RouteInfo, error) {
+			return nil, os.ErrNotExist
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	diag := NewDiagnostics("example.com:443", logger)
+
+	result := diag.DiagnoseFailure(context.Background())
+
+	if result.FailureType != FailureNoNetwork {
+		t.Errorf("Expected FailureNoNetwork, got %v", result.FailureType)
+	}
+	if result.Message != "no default route found" {
+		t.Errorf("Unexpected message: %v", result.Message)
+	}
+}
+
+func TestDiagnoseFailure_RouteChanged(t *testing.T) {
+	// Save original netOps and restore after test
+	originalNetOps := netOps
+	defer func() { netOps = originalNetOps }()
+
+	// Mock that returns different gateways
+	netOps = &mockNetworkOps{
+		getRouteToHostFunc: func(ctx context.Context, host string) (*routing.RouteInfo, error) {
+			return &routing.RouteInfo{
+				Gateway:   "192.168.2.1",
+				SrcIP:     "192.168.2.100",
+				Interface: "eth0",
+			}, nil
+		},
+		interfaceByNameFunc: func(name string) (*net.Interface, error) {
+			return &net.Interface{
+				Name:  name,
+				Flags: net.FlagUp,
+			}, nil
+		},
+		pingGatewayFunc: func(ctx context.Context, gateway string) error {
+			return nil
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	diag := NewDiagnostics("example.com:443", logger)
+
+	// Set initial state
+	diag.lastGateway = "192.168.1.1"
+	diag.lastSrcIP = "192.168.1.100"
+
+	result := diag.DiagnoseFailure(context.Background())
+
+	if result.FailureType != FailureRouteChanged {
+		t.Errorf("Expected FailureRouteChanged, got %v", result.FailureType)
+	}
+	if result.Gateway != "192.168.2.1" {
+		t.Errorf("Expected gateway 192.168.2.1, got %v", result.Gateway)
+	}
+	if result.Interface != "eth0" {
+		t.Errorf("Expected interface eth0, got %v", result.Interface)
+	}
+}
+
+func TestDiagnoseFailure_InterfaceDown(t *testing.T) {
+	// Save original netOps and restore after test
+	originalNetOps := netOps
+	defer func() { netOps = originalNetOps }()
+
+	// Mock that returns interface down
+	netOps = &mockNetworkOps{
+		getRouteToHostFunc: func(ctx context.Context, host string) (*routing.RouteInfo, error) {
+			return &routing.RouteInfo{
+				Gateway:   "192.168.1.1",
+				SrcIP:     "192.168.1.100",
+				Interface: "eth0",
+			}, nil
+		},
+		interfaceByNameFunc: func(name string) (*net.Interface, error) {
+			return &net.Interface{
+				Name:  name,
+				Flags: 0, // Interface down
+			}, nil
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	diag := NewDiagnostics("example.com:443", logger)
+
+	result := diag.DiagnoseFailure(context.Background())
+
+	if result.FailureType != FailureInterfaceDown {
+		t.Errorf("Expected FailureInterfaceDown, got %v", result.FailureType)
+	}
+	if result.Interface != "eth0" {
+		t.Errorf("Expected interface eth0, got %v", result.Interface)
+	}
+}
+
+func TestDiagnoseFailure_GatewayUnreachable(t *testing.T) {
+	// Save original netOps and restore after test
+	originalNetOps := netOps
+	defer func() { netOps = originalNetOps }()
+
+	// Mock that returns gateway unreachable
+	netOps = &mockNetworkOps{
+		getRouteToHostFunc: func(ctx context.Context, host string) (*routing.RouteInfo, error) {
+			return &routing.RouteInfo{
+				Gateway:   "192.168.1.1",
+				SrcIP:     "192.168.1.100",
+				Interface: "eth0",
+			}, nil
+		},
+		interfaceByNameFunc: func(name string) (*net.Interface, error) {
+			return &net.Interface{
+				Name:  name,
+				Flags: net.FlagUp,
+			}, nil
+		},
+		pingGatewayFunc: func(ctx context.Context, gateway string) error {
+			return os.ErrDeadlineExceeded
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	diag := NewDiagnostics("example.com:443", logger)
+
+	result := diag.DiagnoseFailure(context.Background())
+
+	if result.FailureType != FailureGatewayUnreachable {
+		t.Errorf("Expected FailureGatewayUnreachable, got %v", result.FailureType)
+	}
+	if result.Gateway != "192.168.1.1" {
+		t.Errorf("Expected gateway 192.168.1.1, got %v", result.Gateway)
+	}
+}
+
+func TestDiagnoseFailure_Unknown(t *testing.T) {
+	// Save original netOps and restore after test
+	originalNetOps := netOps
+	defer func() { netOps = originalNetOps }()
+
+	// Mock that returns everything working
+	netOps = &mockNetworkOps{
+		getRouteToHostFunc: func(ctx context.Context, host string) (*routing.RouteInfo, error) {
+			return &routing.RouteInfo{
+				Gateway:   "192.168.1.1",
+				SrcIP:     "192.168.1.100",
+				Interface: "eth0",
+			}, nil
+		},
+		interfaceByNameFunc: func(name string) (*net.Interface, error) {
+			return &net.Interface{
+				Name:  name,
+				Flags: net.FlagUp,
+			}, nil
+		},
+		pingGatewayFunc: func(ctx context.Context, gateway string) error {
+			return nil
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	diag := NewDiagnostics("example.com:443", logger)
+
+	result := diag.DiagnoseFailure(context.Background())
+
+	if result.FailureType != FailureUnknown {
+		t.Errorf("Expected FailureUnknown, got %v", result.FailureType)
+	}
+	if result.Message != "connectivity lost but network appears normal" {
+		t.Errorf("Unexpected message: %v", result.Message)
+	}
+}
+
+func TestDiagnoseFailure_InitialStateUpdate(t *testing.T) {
+	// Save original netOps and restore after test
+	originalNetOps := netOps
+	defer func() { netOps = originalNetOps }()
+
+	// Mock that returns route info
+	netOps = &mockNetworkOps{
+		getRouteToHostFunc: func(ctx context.Context, host string) (*routing.RouteInfo, error) {
+			return &routing.RouteInfo{
+				Gateway:   "192.168.1.1",
+				SrcIP:     "192.168.1.100",
+				Interface: "eth0",
+			}, nil
+		},
+		interfaceByNameFunc: func(name string) (*net.Interface, error) {
+			return &net.Interface{
+				Name:  name,
+				Flags: net.FlagUp,
+			}, nil
+		},
+		pingGatewayFunc: func(ctx context.Context, gateway string) error {
+			return nil
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	diag := NewDiagnostics("example.com:443", logger)
+
+	// Initially empty
+	if diag.lastGateway != "" {
+		t.Errorf("Initial lastGateway should be empty, got %v", diag.lastGateway)
+	}
+
+	diag.DiagnoseFailure(context.Background())
+
+	// Should be updated after first call
+	if diag.lastGateway != "192.168.1.1" {
+		t.Errorf("lastGateway should be updated to 192.168.1.1, got %v", diag.lastGateway)
+	}
+	if diag.lastSrcIP != "192.168.1.100" {
+		t.Errorf("lastSrcIP should be updated to 192.168.1.100, got %v", diag.lastSrcIP)
+	}
+}
+
+func TestIsInterfaceUp_Success(t *testing.T) {
+	// Save original netOps and restore after test
+	originalNetOps := netOps
+	defer func() { netOps = originalNetOps }()
+
+	// Mock that returns interface up
+	netOps = &mockNetworkOps{
+		interfaceByNameFunc: func(name string) (*net.Interface, error) {
+			return &net.Interface{
+				Name:  name,
+				Flags: net.FlagUp,
+			}, nil
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	diag := NewDiagnostics("example.com:443", logger)
+
+	if !diag.isInterfaceUp("eth0") {
+		t.Error("Expected interface to be up")
+	}
+}
+
+func TestIsInterfaceUp_Error(t *testing.T) {
+	// Save original netOps and restore after test
+	originalNetOps := netOps
+	defer func() { netOps = originalNetOps }()
+
+	// Mock that returns error
+	netOps = &mockNetworkOps{
+		interfaceByNameFunc: func(name string) (*net.Interface, error) {
+			return nil, os.ErrNotExist
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	diag := NewDiagnostics("example.com:443", logger)
+
+	if diag.isInterfaceUp("nonexistent") {
+		t.Error("Expected interface to be down when error occurs")
 	}
 }

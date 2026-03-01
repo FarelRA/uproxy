@@ -10,6 +10,25 @@ import (
 	"strings"
 )
 
+// commandExecutor is an interface for executing commands (for testing)
+type commandExecutor interface {
+	CombinedOutput(name string, args ...string) ([]byte, error)
+	Output(ctx context.Context, name string, args ...string) ([]byte, error)
+}
+
+// defaultExecutor implements commandExecutor using os/exec
+type defaultExecutor struct{}
+
+func (e *defaultExecutor) CombinedOutput(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
+}
+
+func (e *defaultExecutor) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return exec.CommandContext(ctx, name, args...).Output()
+}
+
+var executor commandExecutor = &defaultExecutor{}
+
 // RouteInfo contains parsed route information
 type RouteInfo struct {
 	Gateway   string
@@ -23,19 +42,35 @@ func ParseIPRouteOutput(output string) (*RouteInfo, error) {
 	fields := strings.Fields(output)
 	info := &RouteInfo{}
 
+	// Keywords that should not be used as values
+	keywords := map[string]bool{
+		"via": true, "dev": true, "src": true, "proto": true,
+		"metric": true, "scope": true, "link": true, "default": true,
+	}
+
 	for i, field := range fields {
 		if field == "via" && i+1 < len(fields) && info.Gateway == "" {
-			info.Gateway = fields[i+1]
+			nextField := fields[i+1]
+			if !keywords[nextField] {
+				info.Gateway = nextField
+			}
 		}
 		if field == "dev" && i+1 < len(fields) && info.Interface == "" {
-			info.Interface = fields[i+1]
+			nextField := fields[i+1]
+			if !keywords[nextField] {
+				info.Interface = nextField
+			}
 		}
 		if field == "src" && i+1 < len(fields) && info.SrcIP == "" {
-			info.SrcIP = fields[i+1]
+			nextField := fields[i+1]
+			if !keywords[nextField] {
+				info.SrcIP = nextField
+			}
 		}
 	}
 
-	if info.Gateway == "" || info.Interface == "" {
+	// Interface is required, but gateway is optional (e.g., for local routes)
+	if info.Interface == "" {
 		return nil, fmt.Errorf("could not parse route information from: %s", output)
 	}
 
@@ -44,20 +79,28 @@ func ParseIPRouteOutput(output string) (*RouteInfo, error) {
 
 // GetDefaultRoute retrieves the default IPv4 route information
 func GetDefaultRoute() (*RouteInfo, error) {
-	cmd := exec.Command("ip", "route", "show", "default")
-	output, err := cmd.CombinedOutput()
+	output, err := executor.CombinedOutput("ip", "route", "show", "default")
 	if err != nil {
 		return nil, fmt.Errorf("failed to get default route: %w", err)
 	}
 
-	return ParseIPRouteOutput(string(output))
+	info, err := ParseIPRouteOutput(string(output))
+	if err != nil {
+		return nil, err
+	}
+
+	// Default routes must have a gateway
+	if info.Gateway == "" {
+		return nil, fmt.Errorf("default route missing gateway")
+	}
+
+	return info, nil
 }
 
 // GetDefaultIPv6Route retrieves the default IPv6 route information
 // Returns nil error with empty RouteInfo if IPv6 is not configured
 func GetDefaultIPv6Route() (*RouteInfo, error) {
-	cmd := exec.Command("ip", "-6", "route", "show", "default")
-	output, err := cmd.CombinedOutput()
+	output, err := executor.CombinedOutput("ip", "-6", "route", "show", "default")
 	if err != nil {
 		// IPv6 might not be configured, that's okay
 		return &RouteInfo{}, nil
@@ -74,8 +117,7 @@ func GetDefaultIPv6Route() (*RouteInfo, error) {
 
 // GetRouteToHost retrieves route information for a specific host
 func GetRouteToHost(ctx context.Context, host string) (*RouteInfo, error) {
-	cmd := exec.CommandContext(ctx, "ip", "route", "get", host)
-	output, err := cmd.Output()
+	output, err := executor.Output(ctx, "ip", "route", "get", host)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get route to %s: %w", host, err)
 	}

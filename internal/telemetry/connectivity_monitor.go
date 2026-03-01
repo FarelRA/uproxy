@@ -17,12 +17,17 @@ type ConnectivityMonitor struct {
 	lastTxTime        atomic.Value // time.Time
 }
 
-// NewConnectivityMonitor creates a new connectivity monitor
+// NewConnectivityMonitor creates a new connectivity monitor with default timeouts
 func NewConnectivityMonitor(onFailure func()) *ConnectivityMonitor {
+	return NewConnectivityMonitorWithTimeouts(onFailure, 250*time.Millisecond, 30*time.Second, 500*time.Millisecond)
+}
+
+// NewConnectivityMonitorWithTimeouts creates a new connectivity monitor with custom timeouts
+func NewConnectivityMonitorWithTimeouts(onFailure func(), checkInterval, idleTimeout, asymmetricTimeout time.Duration) *ConnectivityMonitor {
 	m := &ConnectivityMonitor{
-		checkInterval:     250 * time.Millisecond,
-		idleTimeout:       30 * time.Second,
-		asymmetricTimeout: 500 * time.Millisecond,
+		checkInterval:     checkInterval,
+		idleTimeout:       idleTimeout,
+		asymmetricTimeout: asymmetricTimeout,
 		onFailure:         onFailure,
 		stopChan:          make(chan struct{}),
 	}
@@ -64,13 +69,9 @@ func (m *ConnectivityMonitor) monitorLoop() {
 func (m *ConnectivityMonitor) checkConnectivity() {
 	now := time.Now()
 
-	// Get last activity times
-	lastRx, okRx := m.lastRxTime.Load().(time.Time)
-	lastTx, okTx := m.lastTxTime.Load().(time.Time)
-
-	if !okRx || !okTx {
-		return
-	}
+	// Get last activity times (type assertion always succeeds since atomic.Value enforces type consistency)
+	lastRx := m.lastRxTime.Load().(time.Time)
+	lastTx := m.lastTxTime.Load().(time.Time)
 
 	timeSinceRx := now.Sub(lastRx)
 	timeSinceTx := now.Sub(lastTx)

@@ -7,6 +7,29 @@ import (
 	"runtime"
 )
 
+// networkInterface abstracts net.Interface operations for testing
+type networkInterface interface {
+	Addrs() ([]net.Addr, error)
+}
+
+// realNetworkInterface wraps net.Interface
+type realNetworkInterface struct {
+	iface *net.Interface
+}
+
+func (r *realNetworkInterface) Addrs() ([]net.Addr, error) {
+	return r.iface.Addrs()
+}
+
+// interfaceByNameFunc allows mocking net.InterfaceByName for testing
+var interfaceByNameFunc = func(name string) (networkInterface, error) {
+	iface, err := net.InterfaceByName(name)
+	if err != nil {
+		return nil, err
+	}
+	return &realNetworkInterface{iface: iface}, nil
+}
+
 // IsRoot checks if the current process has root/administrator privileges.
 // Returns true if running as root (Unix) or administrator (Windows).
 func IsRoot() bool {
@@ -24,7 +47,7 @@ func IsRoot() bool {
 // This is essential for forcing the proxy's outbound traffic (both TCP and UDP)
 // through a specific VPN tunnel or network interface (e.g., tun0).
 func FirstIPv4OfInterface(ifaceName string) (net.IP, error) {
-	iface, err := net.InterfaceByName(ifaceName)
+	iface, err := interfaceByNameFunc(ifaceName)
 	if err != nil {
 		return nil, fmt.Errorf("interface %s not found: %w", ifaceName, err)
 	}
@@ -50,7 +73,7 @@ func FirstIPv4OfInterface(ifaceName string) (net.IP, error) {
 // FirstIPv6OfInterface iterates through all IP addresses of a given network interface
 // and returns the very first valid IPv6 address it finds (excluding link-local).
 func FirstIPv6OfInterface(ifaceName string) (net.IP, error) {
-	iface, err := net.InterfaceByName(ifaceName)
+	iface, err := interfaceByNameFunc(ifaceName)
 	if err != nil {
 		return nil, fmt.Errorf("interface %s not found: %w", ifaceName, err)
 	}
@@ -87,7 +110,7 @@ func FirstIPOfInterface(ifaceName string) (net.IP, error) {
 
 // GetInterfaceIPs returns both IPv4 and IPv6 addresses for an interface.
 func GetInterfaceIPs(ifaceName string) (ipv4 net.IP, ipv6 net.IP, err error) {
-	iface, err := net.InterfaceByName(ifaceName)
+	iface, err := interfaceByNameFunc(ifaceName)
 	if err != nil {
 		return nil, nil, fmt.Errorf("interface %s not found: %w", ifaceName, err)
 	}

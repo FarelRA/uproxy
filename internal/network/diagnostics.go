@@ -14,6 +14,33 @@ import (
 	"uproxy/internal/routing"
 )
 
+// networkOps defines operations for network diagnostics (for testing)
+type networkOps interface {
+	GetRouteToHost(ctx context.Context, host string) (*routing.RouteInfo, error)
+	InterfaceByName(name string) (*net.Interface, error)
+	PingGateway(ctx context.Context, gateway string) error
+}
+
+// defaultNetworkOps implements networkOps using real network operations
+type defaultNetworkOps struct{}
+
+func (d *defaultNetworkOps) GetRouteToHost(ctx context.Context, host string) (*routing.RouteInfo, error) {
+	return routing.GetRouteToHost(ctx, host)
+}
+
+func (d *defaultNetworkOps) InterfaceByName(name string) (*net.Interface, error) {
+	return net.InterfaceByName(name)
+}
+
+func (d *defaultNetworkOps) PingGateway(ctx context.Context, gateway string) error {
+	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "1", gateway)
+	return cmd.Run()
+}
+
+var netOps networkOps = &defaultNetworkOps{}
+
 // FailureType represents the type of network failure detected
 type FailureType int
 
@@ -130,7 +157,7 @@ func (d *Diagnostics) getDefaultRoute(ctx context.Context) (gateway, srcIP, ifac
 	// Try to get route to server address
 	host := ExtractHost(d.serverAddr)
 
-	info, err := routing.GetRouteToHost(ctx, host)
+	info, err := netOps.GetRouteToHost(ctx, host)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -140,7 +167,7 @@ func (d *Diagnostics) getDefaultRoute(ctx context.Context) (gateway, srcIP, ifac
 
 // isInterfaceUp checks if a network interface is up
 func (d *Diagnostics) isInterfaceUp(ifaceName string) bool {
-	iface, err := net.InterfaceByName(ifaceName)
+	iface, err := netOps.InterfaceByName(ifaceName)
 	if err != nil {
 		return false
 	}
@@ -149,10 +176,6 @@ func (d *Diagnostics) isInterfaceUp(ifaceName string) bool {
 
 // isGatewayReachable checks if the gateway responds to ping
 func (d *Diagnostics) isGatewayReachable(ctx context.Context, gateway string) bool {
-	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "1", gateway)
-	err := cmd.Run()
+	err := netOps.PingGateway(ctx, gateway)
 	return err == nil
 }

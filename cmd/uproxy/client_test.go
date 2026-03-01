@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -107,9 +108,19 @@ func TestValidateMode(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "valid socks5 mode",
-			cfg:     &config.ClientConfig{Mode: "socks5"},
+			name:    "valid socks5 mode with listen",
+			cfg:     &config.ClientConfig{Mode: "socks5", ListenAddr: ":1080"},
 			wantErr: false,
+		},
+		{
+			name:    "socks5 mode without listen",
+			cfg:     &config.ClientConfig{Mode: "socks5"},
+			wantErr: true, // socks5 requires --listen
+		},
+		{
+			name:    "tun mode requires root",
+			cfg:     &config.ClientConfig{Mode: "tun"},
+			wantErr: os.Geteuid() != 0, // Expect error if not root
 		},
 		{
 			name:    "valid auto mode",

@@ -14,6 +14,9 @@ import (
 	"golang.org/x/crypto/ssh/knownhosts"
 )
 
+// homeDirFunc is a variable for dependency injection in tests
+var homeDirFunc = os.UserHomeDir
+
 // LoadPrivateKey attempts to load the SSH client identity file.
 // If privateKeyPath is specified, it loads that specific file.
 // If sshDir is specified, it looks for id_ed25519 or id_rsa in that directory.
@@ -28,7 +31,7 @@ func LoadPrivateKey(sshDir, privateKeyPath string) (ssh.Signer, error) {
 		// Determine SSH directory
 		dir := sshDir
 		if dir == "" {
-			home, err := os.UserHomeDir()
+			home, err := homeDirFunc()
 			if err != nil {
 				return nil, fmt.Errorf("failed to get user home directory: %w", err)
 			}
@@ -77,7 +80,7 @@ func CheckAuthorizedKeys(pubKey ssh.PublicKey, sshDir, authorizedKeysPath string
 	if authFile == "" {
 		dir := sshDir
 		if dir == "" {
-			home, err := os.UserHomeDir()
+			home, err := homeDirFunc()
 			if err != nil {
 				return fmt.Errorf("failed to get user home directory: %w", err)
 			}
@@ -116,7 +119,7 @@ func VerifyKnownHost(address string, remote net.Addr, pubKey ssh.PublicKey, sshD
 	if khPath == "" {
 		dir := sshDir
 		if dir == "" {
-			home, err := os.UserHomeDir()
+			home, err := homeDirFunc()
 			if err != nil {
 				return fmt.Errorf("failed to get user home directory: %w", err)
 			}
