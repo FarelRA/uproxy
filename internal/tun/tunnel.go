@@ -106,7 +106,7 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 			}
 
 			// Write framed packet to SSH channel
-			if err := writeFramed(sshChan, packet); err != nil {
+			if err := framing.WriteFramed(sshChan, packet); err != nil {
 				errChan <- fmt.Errorf("SSH write error: %w", err)
 				return
 			}
@@ -129,7 +129,7 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 			}
 
 			// Read framed packet from SSH channel
-			packet, err := readFramed(sshChan)
+			packet, err := framing.ReadFramed(sshChan)
 			if err != nil {
 				if err != io.EOF {
 					errChan <- fmt.Errorf("SSH read error: %w", err)
@@ -222,16 +222,6 @@ func openTUNChannel(client *ssh.Client) (ssh.Channel, error) {
 	return channel, nil
 }
 
-// writeFramed is a wrapper around framing.WriteFramed for backward compatibility
-func writeFramed(w io.Writer, data []byte) error {
-	return framing.WriteFramed(w, data)
-}
-
-// readFramed is a wrapper around framing.ReadFramed for backward compatibility
-func readFramed(r io.Reader) ([]byte, error) {
-	return framing.ReadFramed(r)
-}
-
 // HandleTUN handles TUN packets on the server side using the shared TUN manager
 func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 	defer channel.Close()
@@ -275,7 +265,7 @@ func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 		default:
 		}
 
-		packet, err := readFramed(channel)
+		packet, err := framing.ReadFramed(channel)
 		if err != nil {
 			if err != io.EOF {
 				slog.Debug("SSH read error", "client_ipv4", clientIPv4, "error", err)

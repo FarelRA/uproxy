@@ -8,6 +8,8 @@ import (
 
 	"github.com/songgao/water"
 	"golang.org/x/crypto/ssh"
+
+	"uproxy/internal/framing"
 )
 
 // TUNManager manages a single TUN device shared by multiple clients.
@@ -184,7 +186,7 @@ func (m *TUNManager) dispatchPackets() {
 			// Client disconnected
 			continue
 		default:
-			if err := writeFramed(route.Channel, packet); err != nil {
+			if err := framing.WriteFramed(route.Channel, packet); err != nil {
 				slog.Debug("Failed to write packet to client", "ip", dstIP, "error", err)
 			}
 		}
