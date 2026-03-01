@@ -201,7 +201,8 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 
 	// Add default route through TUN (IPv6) if IPv6 is available
 	if ipv6gw != "" {
-		cmd = exec.Command("ip", "-6", "route", "add", "default", "dev", tunDevice)
+		// Use 'replace' instead of 'add' to handle existing routes
+		cmd = exec.Command("ip", "-6", "route", "replace", "default", "dev", tunDevice)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			// IPv6 might fail, log but don't error
 			slog.Warn("Failed to add default IPv6 route", "error", err, "output", string(output))
