@@ -68,7 +68,7 @@ func main() {
 	rootCmd.Flags().StringVar(&sshKnownHosts, "ssh-known-hosts", "", "SSH known_hosts file (default: ~/.ssh/known_hosts)")
 
 	// TUN mode flags
-	rootCmd.Flags().StringVar(&tunName, "tun-name", "utun0", "TUN device name (tun mode only)")
+	rootCmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name (tun mode only)")
 	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "", "TUN interface IPv4 address (required for tun mode)")
 	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask (tun mode only)")
 	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "", "TUN interface IPv6 address with prefix (e.g., fd00::2/64)")

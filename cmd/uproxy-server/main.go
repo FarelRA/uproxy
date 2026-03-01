@@ -78,7 +78,7 @@ func main() {
 	rootCmd.Flags().IntVar(&kcpCfg.MTU, "kcp-mtu", 1350, "KCP MTU")
 
 	// TUN mode flags (server side)
-	rootCmd.Flags().StringVar(&tunName, "tun-name", "utun1", "TUN device name for server")
+	rootCmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name for server")
 	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "10.0.0.1", "TUN interface IPv4 address for server")
 	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask")
 	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "", "TUN interface IPv6 address with prefix (e.g., fd00::1/64)")
