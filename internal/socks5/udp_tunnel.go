@@ -60,6 +60,92 @@ func parseSOCKS5UDPHeader(data []byte) (target string, payload []byte, header []
 	return target, data[idx:], data[:idx], nil
 }
 
+type udpSessionManager struct {
+	sessions   map[string]ssh.Channel
+	mu         sync.Mutex
+	clientAddr *net.UDPAddr
+	sshClient  *ssh.Client
+	conn       *net.UDPConn
+}
+
+func newUDPSessionManager(sshClient *ssh.Client, conn *net.UDPConn) *udpSessionManager {
+	return &udpSessionManager{
+		sessions:  make(map[string]ssh.Channel),
+		sshClient: sshClient,
+		conn:      conn,
+	}
+}
+
+func (m *udpSessionManager) setClientAddr(addr *net.UDPAddr) {
+	m.mu.Lock()
+	m.clientAddr = addr
+	m.mu.Unlock()
+}
+
+func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) (ssh.Channel, error) {
+	m.mu.Lock()
+	channel, exists := m.sessions[targetStr]
+	m.mu.Unlock()
+
+	if exists {
+		return channel, nil
+	}
+
+	ch, reqs, err := m.sshClient.OpenChannel(ChannelTypeUDP, nil)
+	if err != nil {
+		return nil, err
+	}
+	go ssh.DiscardRequests(reqs)
+
+	if err := WriteTargetHeader(ch, targetStr); err != nil {
+		ch.Close()
+		return nil, err
+	}
+
+	slog.Info("UDP Stream started", "layer", "socks5_udp", "role", "client", "target", targetStr)
+
+	m.mu.Lock()
+	m.sessions[targetStr] = ch
+	m.mu.Unlock()
+
+	go m.handleSessionResponses(targetStr, ch, header)
+
+	return ch, nil
+}
+
+func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel, header []byte) {
+	start := time.Now()
+	var txBytes, rxBytes int64
+	defer func() {
+		ch.Close()
+		m.mu.Lock()
+		delete(m.sessions, target)
+		m.mu.Unlock()
+		slog.Info("UDP Stream closed", "layer", "socks5_udp", "role", "client", "target", target, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
+	}()
+
+	for {
+		data, err := ReadFramed(ch)
+		if err != nil {
+			return
+		}
+
+		rxBytes += int64(len(data))
+
+		pkt := make([]byte, 0, len(header)+len(data))
+		pkt = append(pkt, header...)
+		pkt = append(pkt, data...)
+
+		m.mu.Lock()
+		cAddr := m.clientAddr
+		m.mu.Unlock()
+
+		if cAddr != nil {
+			m.conn.WriteToUDP(pkt, cAddr)
+		}
+	}
+}
+
 // DialUDP runs on the client side. It binds a local UDP socket and pipes SOCKS5 UDP frames into SSH channels.
 func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(listenIP, "0"))
@@ -71,26 +157,23 @@ func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error
 		return nil, nil, err
 	}
 
+	sessionMgr := newUDPSessionManager(sshClient, conn)
+
 	go func() {
 		defer conn.Close()
 		slog.Info("SOCKS5 UDP Associate local binding opened", "layer", "socks5", "addr", conn.LocalAddr().String())
 
-		sessions := make(map[string]ssh.Channel)
-		var mu sync.Mutex
-		var clientAddr *net.UDPAddr
-
 		bufPtr := getUDPBuffer()
 		defer putUDPBuffer(bufPtr)
 		buf := *bufPtr
+
 		for {
 			n, addr, err := conn.ReadFromUDP(buf)
 			if err != nil {
 				return
 			}
 
-			mu.Lock()
-			clientAddr = addr
-			mu.Unlock()
+			sessionMgr.setClientAddr(addr)
 
 			if n < 4 {
 				continue
@@ -101,66 +184,11 @@ func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error
 				continue
 			}
 
-			mu.Lock()
-			channel, exists := sessions[targetStr]
-			mu.Unlock()
-
-			if !exists {
-				ch, reqs, err := sshClient.OpenChannel(ChannelTypeUDP, nil)
-				if err != nil {
-					continue
-				}
-				go ssh.DiscardRequests(reqs)
-
-				if err := WriteTargetHeader(ch, targetStr); err != nil {
-					ch.Close()
-					continue
-				}
-
-				slog.Info("UDP Stream started", "layer", "socks5_udp", "role", "client", "target", targetStr)
-
-				mu.Lock()
-				sessions[targetStr] = ch
-				mu.Unlock()
-				channel = ch
-
-				go func(target string, ch ssh.Channel, hdr []byte) {
-					start := time.Now()
-					var txBytes, rxBytes int64
-					defer func() {
-						ch.Close()
-						mu.Lock()
-						delete(sessions, target)
-						mu.Unlock()
-						slog.Info("UDP Stream closed", "layer", "socks5_udp", "role", "client", "target", target, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
-					}()
-
-					for {
-						data, err := ReadFramed(ch)
-						if err != nil {
-							return
-						}
-
-						rxBytes += int64(len(data))
-
-						pkt := make([]byte, 0, len(hdr)+len(data))
-						pkt = append(pkt, hdr...)
-						pkt = append(pkt, data...)
-
-						mu.Lock()
-						cAddr := clientAddr
-						mu.Unlock()
-
-						if cAddr != nil {
-							conn.WriteToUDP(pkt, cAddr)
-						}
-					}
-				}(targetStr, ch, append([]byte(nil), header...))
+			channel, err := sessionMgr.getOrCreateSession(targetStr, header)
+			if err != nil {
+				continue
 			}
 
-			// We treat client->server as TX
-			// To track accurately we'd need to cast to a variable, but since it's just telemetry:
-			// The goroutine above tracks RX, we can just send the payload. For TX bytes, we'll log them on the server side instead to keep the client loop fast.
 			WriteFramed(channel, payload)
 		}
 	}()

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os/exec"
 	"strings"
@@ -160,6 +161,41 @@ func (rm *RouteMonitor) setupRoutesWithRetry() error {
 	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
 }
 
+// startIPMonitor starts the ip monitor process and returns a channel for network changes
+func (rm *RouteMonitor) startIPMonitor() (chan bool, error) {
+	cmd := exec.CommandContext(rm.ctx, "ip", "monitor", "route", "address")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ip monitor pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start ip monitor: %w", err)
+	}
+
+	changeChan := make(chan bool, 10)
+	go rm.scanIPMonitorOutput(stdout, changeChan)
+	go cmd.Wait()
+
+	return changeChan, nil
+}
+
+// scanIPMonitorOutput scans the ip monitor output and signals changes
+func (rm *RouteMonitor) scanIPMonitorOutput(stdout io.ReadCloser, changeChan chan<- bool) {
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Detect relevant changes (default route or address changes)
+		if strings.Contains(line, "default") || strings.Contains(line, "Deleted") {
+			select {
+			case changeChan <- true:
+			default:
+				// Channel full, skip
+			}
+		}
+	}
+}
+
 // monitorNetworkChanges watches for network changes and reconfigures routes
 func (rm *RouteMonitor) monitorNetworkChanges() {
 	slog.Info("Monitoring network changes...")
@@ -170,46 +206,16 @@ func (rm *RouteMonitor) monitorNetworkChanges() {
 	lastIPv6GW := rm.routeInfo.OriginalIPv6GW
 	lastIPv6SrcIP := rm.routeInfo.OriginalIPv6SrcIP
 
-	// Start ip monitor process
-	cmd := exec.CommandContext(rm.ctx, "ip", "monitor", "route", "address")
-	stdout, err := cmd.StdoutPipe()
+	changeChan, err := rm.startIPMonitor()
 	if err != nil {
-		slog.Error("Failed to create ip monitor pipe", "error", err)
+		slog.Error("Failed to start IP monitor", "error", err)
 		return
 	}
-
-	if err := cmd.Start(); err != nil {
-		slog.Error("Failed to start ip monitor", "error", err)
-		return
-	}
-
-	// Monitor output in goroutine
-	changeChan := make(chan bool, 10)
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			line := scanner.Text()
-			// Detect relevant changes (default route or address changes)
-			if strings.Contains(line, "default") || strings.Contains(line, "Deleted") {
-				select {
-				case changeChan <- true:
-				default:
-					// Channel full, skip
-				}
-			}
-		}
-	}()
-
-	// Wait for process to finish
-	go func() {
-		cmd.Wait()
-	}()
 
 	for {
 		select {
 		case <-rm.ctx.Done():
 			return
-
 		case <-changeChan:
 			// Network change detected, debounce and check
 			time.Sleep(100 * time.Millisecond)
