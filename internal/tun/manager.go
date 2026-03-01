@@ -284,14 +284,13 @@ func (m *TUNManager) dispatchPackets() {
 			continue
 		}
 
-		// Send packet to client's SSH channel
+		// Send packet to client's SSH channel (framed)
 		select {
 		case <-route.done:
 			// Client disconnected
 			continue
 		default:
-			_, err := route.Channel.Write(packet)
-			if err != nil {
+			if err := writeFramed(route.Channel, packet); err != nil {
 				slog.Debug("Failed to write packet to client", "ip", dstIP, "error", err)
 			}
 		}
