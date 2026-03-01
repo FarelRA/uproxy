@@ -132,13 +132,20 @@ sudo ./bin/uproxy-client-amd64 \
 ```
 *Note: TUN mode requires root privileges or `CAP_NET_ADMIN` capability.*
 
-**TUN Mode Protocol Support:**
-- **TCP (IPv4/IPv6)**: Full connection tracking with per-flow SSH channels. Supports stateful TCP connections with proper sequence number handling.
-- **UDP (IPv4/IPv6)**: Session-based tracking with 60-second idle timeout. Each unique source/destination pair gets a dedicated SSH channel.
-- **ICMP (IPv4)**: Echo request/reply (ping), destination unreachable, time exceeded (traceroute).
-- **ICMPv6 (IPv6)**: Echo request/reply, neighbor discovery, router advertisements.
+**TUN Mode Architecture:**
 
-All packets are properly constructed with correct IP headers, protocol headers, and checksums. The server routes packets to their destinations and returns responses through the encrypted SSH/KCP tunnel.
+TUN mode leverages the **system's native TCP/IP stack** for maximum efficiency and reliability:
+
+- **Client Side**: Applications → Kernel TCP/IP stack → TUN device → uproxy reads complete IP packets → SSH/KCP tunnel
+- **Server Side**: SSH/KCP tunnel → uproxy injects packets via raw sockets → Kernel routing/NAT → Internet
+
+**Why this approach?**
+- **No protocol reinvention**: The kernel handles TCP state machines, checksums, fragmentation, congestion control, etc.
+- **Full protocol support**: TCP, UDP, ICMP, ICMPv6, and any other IP protocol work automatically
+- **Better performance**: Zero overhead from userspace protocol handling
+- **More reliable**: Battle-tested kernel networking stack vs. custom implementations
+
+The server requires `CAP_NET_RAW` capability to inject packets using raw sockets. All routing, NAT, and forwarding decisions are handled by the kernel's networking stack.
 
 *Note: On your first connection, the client will prompt your terminal to accept the server's host key, exactly like OpenSSH.*
 

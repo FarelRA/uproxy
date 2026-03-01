@@ -73,11 +73,10 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 
 			packet := buf[:n]
 
-			// Log packet info (debug)
-			if version := IPVersion(packet); version == 4 {
-				if src, dst, proto, err := ParseIPv4Header(packet); err == nil {
-					slog.Debug("TX packet", "src", src, "dst", dst, "proto", ProtocolName(proto), "size", n)
-				}
+			// Basic validation
+			if !ValidatePacket(packet) {
+				slog.Debug("Invalid packet dropped", "size", n)
+				continue
 			}
 
 			// Write framed packet to SSH channel
@@ -112,14 +111,13 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 				return
 			}
 
-			// Log packet info (debug)
-			if version := IPVersion(packet); version == 4 {
-				if src, dst, proto, err := ParseIPv4Header(packet); err == nil {
-					slog.Debug("RX packet", "src", src, "dst", dst, "proto", ProtocolName(proto), "size", len(packet))
-				}
+			// Basic validation
+			if !ValidatePacket(packet) {
+				slog.Debug("Invalid packet dropped", "size", len(packet))
+				continue
 			}
 
-			// Write packet to TUN device
+			// Write packet to TUN device - kernel handles the rest
 			if _, err := iface.Write(packet); err != nil {
 				errChan <- fmt.Errorf("TUN write error: %w", err)
 				return
@@ -200,19 +198,23 @@ func readFramed(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-// HandleTUN handles TUN packets on the server side with protocol-aware flow management
+// HandleTUN handles TUN packets on the server side by injecting them into the system's IP stack
 func HandleTUN(channel ssh.Channel, outbound string) {
 	defer channel.Close()
 
 	slog.Info("TUN channel opened")
 
-	// Create flow handler
-	handler := NewFlowHandler(channel, outbound)
-	defer handler.Close()
+	// Create packet injector
+	injector, err := NewPacketInjector(outbound)
+	if err != nil {
+		slog.Error("Failed to create packet injector", "error", err)
+		return
+	}
+	defer injector.Close()
 
 	var rxPackets, rxBytes atomic.Int64
 
-	// Read from channel, forward to network
+	// Read from channel, inject into system stack
 	for {
 		packet, err := readFramed(channel)
 		if err != nil {
@@ -222,12 +224,18 @@ func HandleTUN(channel ssh.Channel, outbound string) {
 			break
 		}
 
+		// Basic validation
+		if !ValidatePacket(packet) {
+			slog.Debug("Invalid packet dropped", "size", len(packet))
+			continue
+		}
+
 		rxPackets.Add(1)
 		rxBytes.Add(int64(len(packet)))
 
-		// Handle packet through flow handler
-		if err := handler.HandlePacket(packet); err != nil {
-			slog.Debug("Failed to handle packet", "error", err)
+		// Inject packet into system stack - kernel handles routing, NAT, etc.
+		if err := injector.Inject(packet); err != nil {
+			slog.Debug("Failed to inject packet", "error", err)
 		}
 	}
 
