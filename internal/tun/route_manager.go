@@ -1,4 +1,4 @@
-package network
+package tun
 
 import (
 	"context"
@@ -6,15 +6,13 @@ import (
 	"log/slog"
 	"net"
 	"time"
-
-	"uproxy/internal/tun"
 )
 
 // RouteManager handles route setup and cleanup for TUN interfaces
 type RouteManager struct {
 	serverAddr string
 	tunDevice  string
-	routeInfo  *tun.RouteInfo
+	routeInfo  *RouteInfo
 	logger     *slog.Logger
 }
 
@@ -48,7 +46,7 @@ func (rm *RouteManager) SetupRoutes(ctx context.Context) error {
 		default:
 		}
 
-		info, err := tun.SetupClientRoutes(rm.serverAddr, rm.tunDevice)
+		info, err := SetupClientRoutes(rm.serverAddr, rm.tunDevice)
 		if err == nil {
 			rm.routeInfo = info
 			rm.logger.Info("Routes configured successfully",
@@ -72,7 +70,7 @@ func (rm *RouteManager) SetupRoutes(ctx context.Context) error {
 // CleanupRoutes removes routes for the TUN interface
 func (rm *RouteManager) CleanupRoutes() {
 	if rm.routeInfo != nil {
-		tun.CleanupClientRoutes(rm.routeInfo)
+		CleanupClientRoutes(rm.routeInfo)
 		rm.routeInfo = nil
 	}
 }
@@ -86,6 +84,11 @@ func (rm *RouteManager) ResetRoutes(ctx context.Context) error {
 
 	// Setup new routes
 	return rm.SetupRoutes(ctx)
+}
+
+// GetRouteInfo returns the current route information
+func (rm *RouteManager) GetRouteInfo() *RouteInfo {
+	return rm.routeInfo
 }
 
 // waitForTunDevice waits for the TUN device to become available

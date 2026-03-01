@@ -116,7 +116,7 @@ type connectionManager struct {
 	sshClient    *ssh.Client
 	kcpConn      *kcp.UDPSession
 	packetConn   *uproxy.ResilientPacketConn
-	routeManager *network.RouteManager
+	routeManager *tun.RouteManager
 	diagnostics  *network.Diagnostics
 }
 
@@ -434,7 +434,7 @@ func startTUNTunnel(ctx context.Context, cfg *config.ClientConfig, connMgr *conn
 	}
 
 	// Setup route manager for handling route changes
-	connMgr.routeManager = network.NewRouteManager(cfg.ServerAddr, cfg.TUN.Name, slog.Default())
+	connMgr.routeManager = tun.NewRouteManager(cfg.ServerAddr, cfg.TUN.Name, slog.Default())
 
 	fallbackToSOCKS5 := make(chan struct{}, 1)
 

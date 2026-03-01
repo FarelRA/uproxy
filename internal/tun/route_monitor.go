@@ -11,43 +11,30 @@ import (
 	"time"
 )
 
-const (
-	maxRetries = 150
-	retryDelay = 100 * time.Millisecond
-)
-
 // RouteMonitor monitors network changes and maintains routes
 type RouteMonitor struct {
-	serverAddr string
-	tunDevice  string
-	routeInfo  *RouteInfo
-	ctx        context.Context
-	cancel     context.CancelFunc
+	routeManager *RouteManager
+	ctx          context.Context
+	cancel       context.CancelFunc
 }
 
 // NewRouteMonitor creates a new route monitor
 func NewRouteMonitor(serverAddr, tunDevice string) *RouteMonitor {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RouteMonitor{
-		serverAddr: serverAddr,
-		tunDevice:  tunDevice,
-		ctx:        ctx,
-		cancel:     cancel,
+		routeManager: NewRouteManager(serverAddr, tunDevice, slog.Default()),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 }
 
 // Start sets up routes with retry and begins monitoring
 func (rm *RouteMonitor) Start() error {
-	slog.Info("Starting route monitor", "tun_device", rm.tunDevice)
+	slog.Info("Starting route monitor")
 
-	// Wait for TUN device to be ready
-	if err := rm.waitForTunDevice(); err != nil {
-		return fmt.Errorf("TUN device not ready: %w", err)
-	}
-
-	// Setup routes with retry
-	if err := rm.setupRoutesWithRetry(); err != nil {
-		return fmt.Errorf("failed to setup routes after retries: %w", err)
+	// Setup routes using RouteManager (handles retry logic internally)
+	if err := rm.routeManager.SetupRoutes(rm.ctx); err != nil {
+		return fmt.Errorf("failed to setup routes: %w", err)
 	}
 
 	// Start monitoring network changes
@@ -60,105 +47,7 @@ func (rm *RouteMonitor) Start() error {
 func (rm *RouteMonitor) Stop() {
 	slog.Info("Stopping route monitor")
 	rm.cancel()
-
-	if rm.routeInfo != nil {
-		slog.Info("Cleaning up routes...")
-		CleanupClientRoutes(rm.routeInfo)
-	}
-}
-
-// waitForTunDevice waits for the TUN device to be available
-func (rm *RouteMonitor) waitForTunDevice() error {
-	slog.Info("Waiting for TUN device", "device", rm.tunDevice)
-
-	for i := 0; i < 30; i++ {
-		// Check if device exists and is up
-		cmd := exec.Command("ip", "link", "show", rm.tunDevice)
-		output, err := cmd.CombinedOutput()
-		if err == nil && strings.Contains(string(output), "UP") {
-			slog.Info("TUN device ready", "device", rm.tunDevice)
-			return nil
-		}
-
-		select {
-		case <-rm.ctx.Done():
-			return rm.ctx.Err()
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-
-	return fmt.Errorf("timeout waiting for TUN device")
-}
-
-// setupRoutesWithRetry attempts to setup routes with retry logic
-func (rm *RouteMonitor) setupRoutesWithRetry() error {
-	var lastErr error
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		// Get current default gateway
-		gw, iface, srcIP, err := GetDefaultGateway()
-		if err != nil {
-			if attempt == 1 {
-				slog.Warn("Route setup failed", "error", err)
-				slog.Info("Routes not configured, entering retry phase...")
-			}
-			lastErr = err
-			slog.Warn("Retry failed", "error", err, "attempt", attempt, "max", maxRetries)
-
-			select {
-			case <-rm.ctx.Done():
-				return rm.ctx.Err()
-			case <-time.After(retryDelay):
-				continue
-			}
-		}
-
-		// Log current default route
-		ipv6gw, ipv6iface, ipv6src, _ := GetDefaultIPv6Gateway()
-		if ipv6gw != "" {
-			slog.Info("Default routes detected",
-				"ipv4_iface", iface,
-				"ipv4_src", srcIP,
-				"ipv4_gw", gw,
-				"ipv6_iface", ipv6iface,
-				"ipv6_src", ipv6src,
-				"ipv6_gw", ipv6gw)
-		} else {
-			slog.Info("Default route detected",
-				"ipv4_iface", iface,
-				"ipv4_src", srcIP,
-				"ipv4_gw", gw)
-		}
-
-		// Attempt to setup routes
-		info, err := SetupClientRoutes(rm.serverAddr, rm.tunDevice)
-		if err != nil {
-			if attempt == 1 {
-				slog.Warn("Route setup failed", "error", err)
-				slog.Info("Routes not configured, entering retry phase...")
-			}
-			lastErr = err
-			slog.Warn("Retry failed", "error", err, "attempt", attempt, "max", maxRetries)
-
-			select {
-			case <-rm.ctx.Done():
-				return rm.ctx.Err()
-			case <-time.After(retryDelay):
-				continue
-			}
-		}
-
-		rm.routeInfo = info
-
-		if attempt > 1 {
-			slog.Info("Routes configured successfully after retry")
-		}
-
-		rm.logRoutesConfigured()
-		return nil
-	}
-
-	return fmt.Errorf("failed after %d attempts: %w", maxRetries, lastErr)
+	rm.routeManager.CleanupRoutes()
 }
 
 // startIPMonitor starts the ip monitor process and returns a channel for network changes
@@ -200,11 +89,17 @@ func (rm *RouteMonitor) scanIPMonitorOutput(stdout io.ReadCloser, changeChan cha
 func (rm *RouteMonitor) monitorNetworkChanges() {
 	slog.Info("Monitoring network changes...")
 
+	routeInfo := rm.routeManager.GetRouteInfo()
+	if routeInfo == nil {
+		slog.Error("No route info available for monitoring")
+		return
+	}
+
 	// Track last known gateway to detect changes
-	lastGW := rm.routeInfo.OriginalGW
-	lastSrcIP := rm.routeInfo.OriginalSrcIP
-	lastIPv6GW := rm.routeInfo.OriginalIPv6GW
-	lastIPv6SrcIP := rm.routeInfo.OriginalIPv6SrcIP
+	lastGW := routeInfo.OriginalGW
+	lastSrcIP := routeInfo.OriginalSrcIP
+	lastIPv6GW := routeInfo.OriginalIPv6GW
+	lastIPv6SrcIP := routeInfo.OriginalIPv6SrcIP
 
 	changeChan, err := rm.startIPMonitor()
 	if err != nil {
@@ -260,26 +155,12 @@ func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, last
 			"ipv4_gw", gw)
 	}
 
-	// Cleanup old routes
-	if rm.routeInfo != nil {
-		CleanupClientRoutes(rm.routeInfo)
-	}
-
-	// Setup new routes
-	info, err := SetupClientRoutes(rm.serverAddr, rm.tunDevice)
-	if err != nil {
-		slog.Error("Failed to reconfigure routes", "error", err)
-		// Try again with retry
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			if err := rm.setupRoutesWithRetry(); err != nil {
-				slog.Error("Failed to setup routes after network change", "error", err)
-			}
-		}()
+	// Reset routes using RouteManager (handles cleanup and setup with retry)
+	if err := rm.routeManager.ResetRoutes(rm.ctx); err != nil {
+		slog.Error("Failed to reset routes after network change", "error", err)
 		return
 	}
 
-	rm.routeInfo = info
 	*lastGW = gw
 	*lastSrcIP = srcIP
 	*lastIPv6GW = ipv6gw
@@ -291,24 +172,25 @@ func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, last
 
 // logRoutesConfigured logs the current route configuration
 func (rm *RouteMonitor) logRoutesConfigured() {
-	if rm.routeInfo == nil {
+	routeInfo := rm.routeManager.GetRouteInfo()
+	if routeInfo == nil {
 		return
 	}
 
-	if rm.routeInfo.OriginalIPv6GW != "" {
+	if routeInfo.OriginalIPv6GW != "" {
 		slog.Info("Routes configured",
-			"ipv4_iface", rm.routeInfo.OriginalIface,
-			"ipv4_src", rm.routeInfo.OriginalSrcIP,
-			"ipv4_gw", rm.routeInfo.OriginalGW,
-			"ipv6_iface", rm.routeInfo.OriginalIPv6Iface,
-			"ipv6_src", rm.routeInfo.OriginalIPv6SrcIP,
-			"ipv6_gw", rm.routeInfo.OriginalIPv6GW,
-			"tunnel", fmt.Sprintf("IPv4+IPv6 via %s", rm.tunDevice))
+			"ipv4_iface", routeInfo.OriginalIface,
+			"ipv4_src", routeInfo.OriginalSrcIP,
+			"ipv4_gw", routeInfo.OriginalGW,
+			"ipv6_iface", routeInfo.OriginalIPv6Iface,
+			"ipv6_src", routeInfo.OriginalIPv6SrcIP,
+			"ipv6_gw", routeInfo.OriginalIPv6GW,
+			"tunnel", "IPv4+IPv6")
 	} else {
 		slog.Info("Routes configured",
-			"ipv4_iface", rm.routeInfo.OriginalIface,
-			"ipv4_src", rm.routeInfo.OriginalSrcIP,
-			"ipv4_gw", rm.routeInfo.OriginalGW,
-			"tunnel", fmt.Sprintf("IPv4+IPv6 via %s", rm.tunDevice))
+			"ipv4_iface", routeInfo.OriginalIface,
+			"ipv4_src", routeInfo.OriginalSrcIP,
+			"ipv4_gw", routeInfo.OriginalGW,
+			"tunnel", "IPv4+IPv6")
 	}
 }
