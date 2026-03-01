@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -141,10 +142,18 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 	}
 }
 
+// ErrTUNNotSupported indicates the server doesn't support TUN mode
+var ErrTUNNotSupported = fmt.Errorf("server does not support TUN mode")
+
 // openTUNChannel opens an SSH channel for TUN traffic
 func openTUNChannel(client *ssh.Client) (ssh.Channel, error) {
 	channel, reqs, err := client.OpenChannel(ChannelTypeTUN, nil)
 	if err != nil {
+		// Check if the error is due to unknown channel type (server doesn't support TUN)
+		if strings.Contains(err.Error(), "unknown channel type") ||
+			strings.Contains(err.Error(), "rejected") {
+			return nil, ErrTUNNotSupported
+		}
 		return nil, fmt.Errorf("failed to open channel: %w", err)
 	}
 

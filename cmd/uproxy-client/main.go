@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -252,8 +253,10 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 		}()
 		slog.Info("SOCKS5 TCP/UDP proxy listening", "addr", listenAddr)
 	} else if mode == "tun" {
-		// Start TUN tunnel
+		// Start TUN tunnel with fallback to SOCKS5
+		fallbackToSOCKS5 := make(chan struct{}, 1)
 		go func() {
+			tunFailed := false
 			for {
 				mu.RLock()
 				client := currentSSHClient
@@ -267,6 +270,18 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 
 				err := tun.ServeTUN(ctx, client, tunCfg, tunRoutes)
 				if err != nil {
+					// Check if server doesn't support TUN mode
+					if strings.Contains(err.Error(), "channel type") && strings.Contains(err.Error(), "not supported") {
+						if !tunFailed {
+							slog.Warn("Server does not support TUN mode, falling back to SOCKS5...")
+							tunFailed = true
+							select {
+							case fallbackToSOCKS5 <- struct{}{}:
+							default:
+							}
+						}
+						return
+					}
 					slog.Error("TUN tunnel stopped", "error", err)
 				}
 
@@ -280,6 +295,45 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 			}
 		}()
 		slog.Info("TUN tunnel starting", "device", tunCfg.Name, "ip", tunCfg.IP)
+
+		// Monitor for fallback signal
+		go func() {
+			select {
+			case <-fallbackToSOCKS5:
+				if listenAddr == "" {
+					listenAddr = "127.0.0.1:1080"
+					slog.Info("Using default SOCKS5 listen address", "addr", listenAddr)
+				}
+
+				// Start SOCKS5 server as fallback
+				go func() {
+					err := socks5.ServeSOCKS5(ctx, listenAddr, func(addr string) (net.Conn, error) {
+						mu.RLock()
+						client := currentSSHClient
+						mu.RUnlock()
+						if client == nil {
+							return nil, fmt.Errorf("ssh client not connected")
+						}
+						return socks5.DialTCP(client, addr)
+					}, func() (net.Addr, io.Closer, error) {
+						mu.RLock()
+						client := currentSSHClient
+						mu.RUnlock()
+						if client == nil {
+							return nil, nil, fmt.Errorf("ssh client not connected")
+						}
+						return socks5.DialUDP(client, "127.0.0.1")
+					})
+
+					if err != nil {
+						slog.Error("SOCKS5 proxy server stopped", "error", err)
+					}
+				}()
+				slog.Info("SOCKS5 TCP/UDP proxy listening (fallback mode)", "addr", listenAddr)
+			case <-ctx.Done():
+				return
+			}
+		}()
 	}
 
 	sigChan := make(chan os.Signal, 1)
