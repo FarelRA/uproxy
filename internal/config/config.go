@@ -7,39 +7,7 @@ import (
 )
 
 // Default constants shared between client and server
-const (
-	// Network timeouts
-	DefaultIdleTimeout         = 1 * time.Hour
-	DefaultSSHTimeout          = 10 * time.Second
-	DefaultProxyDialTimeout    = 5 * time.Second
-	DefaultReconnectInterval   = 1 * time.Second
-	DefaultReconnectRetryWait  = 3 * time.Second
-	DefaultShutdownGracePeriod = 200 * time.Millisecond
-
-	// Buffer sizes
-	DefaultTCPBufSize = 32768
-	DefaultUDPSockBuf = 4194304
-
-	// KCP defaults
-	DefaultKCPNoDelay  = 1
-	DefaultKCPInterval = 10
-	DefaultKCPResend   = 2
-	DefaultKCPNC       = 1
-	DefaultKCPSndWnd   = 4096
-	DefaultKCPRcvWnd   = 4096
-	DefaultKCPMTU      = 1350
-	DefaultKCPDeadLink = 0 // 0 = disabled, connectivity monitor handles timeouts
-
-	// TUN defaults
-	DefaultTUNMTU           = 1400
-	DefaultServerTUNIP      = "172.27.66.1"
-	DefaultServerTUNNetmask = "255.255.255.0"
-	DefaultServerTUNIPv6    = "fd42:cafe:beef::1/64"
-
-	// Logging
-	DefaultLogLevel  = "info"
-	DefaultLogFormat = "console"
-)
+// Constants moved to constants.go
 
 // CommonConfig holds configuration shared between client and server
 type CommonConfig struct {
