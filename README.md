@@ -1,6 +1,6 @@
 # uproxy (The Uninterruptible Proxy)
 
-**uproxy** is a highly optimized, cryptographically secure, and completely uninterruptible SOCKS5 proxy. 
+**uproxy** is a highly optimized, cryptographically secure, and completely uninterruptible proxy supporting both SOCKS5 and TUN modes. 
 
 It is designed for one specific purpose: **to keep your connections alive no matter what happens to your physical network.** Whether you are switching from Wi-Fi to Cellular, driving through a tunnel, or closing your laptop lid for a 1-hour flight, `uproxy` seamlessly freezes your active downloads, voice calls, and streams, and resumes them the millisecond you regain internet access—without dropping a single byte.
 
@@ -12,10 +12,10 @@ It is designed for one specific purpose: **to keep your connections alive no mat
 
 ```text
 [ Browser / Application ]
-       │ (SOCKS5 TCP & UDP)
+       │ (SOCKS5 TCP & UDP or TUN IP packets)
 ┌──────▼───────────────────────────┐
 │ uproxy-client                    │
-│  1. SOCKS5: App Demultiplexer    │
+│  1. SOCKS5 or TUN: App Layer     │
 │  2. SSH: ChaCha20 Encryption     │
 │  3. KCP: Reliable UDP Transport  │
 │  4. ResilientPacketConn (Socket) │
@@ -26,7 +26,7 @@ It is designed for one specific purpose: **to keep your connections alive no mat
 │  4. ResilientPacketConn (Socket) │
 │  3. KCP: Reliable UDP Transport  │
 │  2. SSH: Auth & Multiplexer      │
-│  1. SOCKS5: TCP/UDP NAT Router   │
+│  1. SOCKS5 or TUN: Packet Router │
 └──────┬───────────────────────────┘
        │ (Raw TCP & UDP)
 [ The Internet (e.g., Discord) ]
@@ -50,10 +50,15 @@ Instead of TCP, `uproxy` routes traffic over a heavily modified, vendored versio
 - **Client Auth:** No passwords. It loads your local `~/.ssh/id_ed25519` and verifies it against the server's standard `~/.ssh/authorized_keys`.
 - **Server Auth (TOFU):** Protects against MITM attacks. The client checks the server's fingerprint against your `~/.ssh/known_hosts`, throwing the classic OpenSSH terminal prompt if the server is unknown.
 
-### 🌐 Full SOCKS5 (TCP + UDP) Multiplexing
-Fully supports the SOCKS5 spec (`CONNECT` and `UDP ASSOCIATE`).
+### 🌐 Dual Mode: SOCKS5 & TUN
+**SOCKS5 Mode (Default):** Fully supports the SOCKS5 spec (`CONNECT` and `UDP ASSOCIATE`).
 - **Dedicated Channels:** Every single SOCKS5 target (e.g., a DNS lookup, a Discord voice call, a YouTube video) is allocated its own dedicated, isolated SSH channel. 
 - **True UDP NAT:** UDP packets are cleanly framed, routed through the SSH tunnel, and dialed via dedicated sockets on the server side to prevent Head-of-Line blocking.
+
+**TUN Mode (VPN-like):** Creates a virtual network interface for system-wide tunneling.
+- **Layer 3 Tunneling:** All IP packets from the TUN device are encrypted and routed through the SSH/KCP transport.
+- **Transparent Routing:** Applications don't need SOCKS5 support—traffic is captured at the IP layer.
+- **Flexible Routing:** Configure specific routes (e.g., `0.0.0.0/0` for full VPN, or selective routes like `10.0.0.0/8`).
 
 ### ⚡ Extreme Performance
 - **Zero-Copy Memory:** TCP data is copied bidirectionally using a global `sync.Pool` of 32KB buffers (`io.CopyBuffer`), resulting in a flat memory curve with zero Garbage Collection thrashing under gigabit loads.
@@ -96,6 +101,8 @@ sudo ./scripts/uproxy-serverctl.sh start
 ```
 
 ### 4. Run the Client
+
+**SOCKS5 Mode (Default):**
 ```bash
 # Connect to the server and open a local SOCKS5 proxy on port 1080
 ./bin/uproxy-client-amd64 --server 203.0.113.50:6000 --listen 127.0.0.1:1080
@@ -103,6 +110,28 @@ sudo ./scripts/uproxy-serverctl.sh start
 # Or use the systemd control script
 sudo ./scripts/uproxy-clientctl.sh start
 ```
+
+**TUN Mode (VPN-like):**
+```bash
+# Create a TUN interface and route all traffic through it
+sudo ./bin/uproxy-client-amd64 \
+  --mode tun \
+  --server 203.0.113.50:6000 \
+  --tun-name utun0 \
+  --tun-ip 10.0.0.2 \
+  --tun-netmask 255.255.255.0 \
+  --tun-routes 0.0.0.0/0
+
+# Or route only specific networks
+sudo ./bin/uproxy-client-amd64 \
+  --mode tun \
+  --server 203.0.113.50:6000 \
+  --tun-name utun0 \
+  --tun-ip 10.0.0.2 \
+  --tun-routes 10.0.0.0/8,192.168.0.0/16
+```
+*Note: TUN mode requires root privileges or `CAP_NET_ADMIN` capability.*
+
 *Note: On your first connection, the client will prompt your terminal to accept the server's host key, exactly like OpenSSH.*
 
 ---
@@ -151,6 +180,17 @@ sudo ./scripts/uproxy-clientctl.sh tail     # Follow logs in real-time
 Both the Client and Server share perfectly symmetrical CLI flags, allowing you to tune the proxy for different environments.
 
 ```text
+Operating Mode (Client-only):
+  --mode                Operating mode: socks5 or tun (default "socks5")
+  --listen              SOCKS5 listen address (socks5 mode only) (default "127.0.0.1:1080")
+
+TUN Mode Configuration (Client-only):
+  --tun-name            TUN device name (default "utun0")
+  --tun-ip              TUN interface IP address (required for tun mode)
+  --tun-netmask         TUN interface netmask (default "255.255.255.0")
+  --tun-mtu             TUN interface MTU (default 1400)
+  --tun-routes          Comma-separated routes (e.g., "0.0.0.0/0,8.8.8.8/32")
+
 Network Resilience & Timeouts:
   --idle-timeout        Idle timeout before giving up on network (default 1h)
   --reconnect-interval  Interval to retry binding UDP socket on drop (default 1s)
@@ -198,6 +238,7 @@ The repository adheres to strict, idiomatic Go architectural symmetry:
 *   **`internal/kcp/`**: A pruned, vendored version of `xtaci/kcp-go`. Stripped of unused cryptography/FEC to provide a mathematically pure, unencrypted reliable UDP transport.
 *   **`internal/uproxy/`**: The core framework. Handles the `ResilientPacketConn` socket swallowing, native `crypto/ssh` handshaking, zero-copy `proxy.go` buffering, and system-level interface routing.
 *   **`internal/socks5/`**: A pristine, custom-built application layer. Symmetrically parses and routes SOCKS5 TCP (`tcp_tunnel.go`) and UDP (`udp_tunnel.go`) frames independently of the underlying transport.
+*   **`internal/tun/`**: TUN device management and IP packet handling. Provides Layer 3 tunneling capabilities for VPN-like functionality.
 
 ---
 *Built for absolute resilience.*
