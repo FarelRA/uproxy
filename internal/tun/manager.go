@@ -47,8 +47,15 @@ func NewTUNManager(cfg *Config, outbound string) (*TUNManager, error) {
 		return nil, fmt.Errorf("failed to enable IP forwarding: %v", err)
 	}
 
-	// Set up NAT/masquerading
-	if err := EnableNAT(device.Name(), outbound); err != nil {
+	// Set up NAT/masquerading with subnet filtering
+	// Construct subnet strings for NAT rules
+	ipv4Subnet := ""
+	if cfg.IP != "" && cfg.Netmask != "" {
+		ipv4Subnet = cfg.IP + "/" + cfg.Netmask
+	}
+	ipv6Subnet := cfg.IPv6 // Already includes /64
+
+	if err := EnableNAT(device.Name(), outbound, ipv4Subnet, ipv6Subnet); err != nil {
 		device.Close()
 		return nil, fmt.Errorf("failed to setup NAT: %v", err)
 	}

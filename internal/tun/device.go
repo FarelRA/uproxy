@@ -196,7 +196,7 @@ func EnableIPForwarding() error {
 }
 
 // EnableNAT sets up NAT/masquerading for the TUN interface (both IPv4 and IPv6)
-func EnableNAT(tunIface, outboundIface string) error {
+func EnableNAT(tunIface, outboundIface, ipv4Subnet, ipv6Subnet string) error {
 	if runtime.GOOS != "linux" {
 		return nil // Only needed on Linux
 	}
@@ -210,42 +210,47 @@ func EnableNAT(tunIface, outboundIface string) error {
 		outboundIface = iface
 	}
 
-	// IPv4 NAT rules
-	cmd := exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to enable NAT: %w, output: %s", err, output)
-	}
-
-	// Allow forwarding from TUN to outbound interface
-	cmd = exec.Command("iptables", "-A", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("Failed to add forward rule", "error", err, "output", string(output))
-	}
-
-	// Allow forwarding from outbound to TUN interface (return traffic)
-	cmd = exec.Command("iptables", "-A", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("Failed to add return forward rule", "error", err, "output", string(output))
-	}
-
-	// IPv6 NAT rules (ip6tables)
-	cmd = exec.Command("ip6tables", "-t", "nat", "-A", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		slog.Warn("Failed to enable IPv6 NAT", "error", err, "output", string(output))
-	} else {
-		// Allow IPv6 forwarding from TUN to outbound interface
-		cmd = exec.Command("ip6tables", "-A", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT")
+	// IPv4 NAT rules - only masquerade traffic from TUN subnet
+	if ipv4Subnet != "" {
+		cmd := exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-s", ipv4Subnet, "-o", outboundIface, "-j", "MASQUERADE")
 		if output, err := cmd.CombinedOutput(); err != nil {
-			slog.Warn("Failed to add IPv6 forward rule", "error", err, "output", string(output))
+			return fmt.Errorf("failed to enable IPv4 NAT: %w, output: %s", err, output)
+		}
+		slog.Info("IPv4 NAT enabled", "subnet", ipv4Subnet, "outbound", outboundIface)
+
+		// Allow forwarding from TUN to outbound interface (insert at beginning to bypass REJECT rules)
+		cmd = exec.Command("iptables", "-I", "FORWARD", "1", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("Failed to add IPv4 forward rule", "error", err, "output", string(output))
 		}
 
-		// Allow IPv6 forwarding from outbound to TUN interface (return traffic)
-		cmd = exec.Command("ip6tables", "-A", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
+		// Allow forwarding from outbound to TUN interface (return traffic)
+		cmd = exec.Command("iptables", "-I", "FORWARD", "2", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
 		if output, err := cmd.CombinedOutput(); err != nil {
-			slog.Warn("Failed to add IPv6 return forward rule", "error", err, "output", string(output))
+			slog.Warn("Failed to add IPv4 return forward rule", "error", err, "output", string(output))
 		}
+	}
 
-		slog.Info("IPv6 NAT enabled", "tun", tunIface, "outbound", outboundIface)
+	// IPv6 NAT rules - only masquerade traffic from TUN subnet
+	if ipv6Subnet != "" {
+		cmd := exec.Command("ip6tables", "-t", "nat", "-A", "POSTROUTING", "-s", ipv6Subnet, "-o", outboundIface, "-j", "MASQUERADE")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			slog.Warn("Failed to enable IPv6 NAT", "error", err, "output", string(output))
+		} else {
+			slog.Info("IPv6 NAT enabled", "subnet", ipv6Subnet, "outbound", outboundIface)
+
+			// Allow IPv6 forwarding from TUN to outbound interface (insert at beginning to bypass REJECT rules)
+			cmd = exec.Command("ip6tables", "-I", "FORWARD", "1", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				slog.Warn("Failed to add IPv6 forward rule", "error", err, "output", string(output))
+			}
+
+			// Allow IPv6 forwarding from outbound to TUN interface (return traffic)
+			cmd = exec.Command("ip6tables", "-I", "FORWARD", "2", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
+			if output, err := cmd.CombinedOutput(); err != nil {
+				slog.Warn("Failed to add IPv6 return forward rule", "error", err, "output", string(output))
+			}
+		}
 	}
 
 	slog.Info("NAT enabled", "tun", tunIface, "outbound", outboundIface)
