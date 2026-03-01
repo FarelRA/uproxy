@@ -196,9 +196,9 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 		session := conn
 		session.SetStreamMode(true)
 		kcpCfg.Apply(session)
-		session.SetDeadLink(uint32(idleTimeout/time.Second) * 2)
+		session.SetDeadLink(0) // Disabled: connectivity monitor handles all timeouts
 
-		go handleSSHConnection(ctx, uproxy.NewIdleTimeoutConn(conn, idleTimeout), config, outbound, proxyDialTimeout, tunManager, &activeClientsMu, activeClients)
+		go handleSSHConnection(ctx, conn, config, outbound, proxyDialTimeout, tunManager, &activeClientsMu, activeClients)
 	}
 }
 

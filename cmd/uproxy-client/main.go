@@ -186,7 +186,7 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 
 			kcpConn.SetStreamMode(true)
 			kcpCfg.Apply(kcpConn)
-			kcpConn.SetDeadLink(uint32(idleTimeout/time.Second) * 2)
+			kcpConn.SetDeadLink(0) // Disabled: connectivity monitor handles all timeouts
 
 			config := &ssh.ClientConfig{
 				User: "proxy",
@@ -205,7 +205,7 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 				"key_type", signer.PublicKey().Type(),
 				"fingerprint", ssh.FingerprintSHA256(signer.PublicKey()))
 
-			sshClientConn, sshChans, sshReqs, err := ssh.NewClientConn(uproxy.NewIdleTimeoutConn(kcpConn, idleTimeout), serverAddr, config)
+			sshClientConn, sshChans, sshReqs, err := ssh.NewClientConn(kcpConn, serverAddr, config)
 			if err != nil {
 				slog.Error("SSH handshake failed, retrying in 3s...",
 					"error", err,
