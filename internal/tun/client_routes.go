@@ -192,16 +192,16 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 		}
 	}
 
-	// Add default route through TUN (IPv4)
-	cmd := exec.Command("ip", "route", "add", "default", "dev", tunDevice, "metric", "100")
+	// Add default route through TUN (IPv4) with metric 0 (higher priority than original gateway)
+	cmd := exec.Command("ip", "route", "add", "default", "dev", tunDevice, "metric", "0")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("failed to add default IPv4 route: %w, output: %s", err, output)
 	}
-	slog.Info("Added default IPv4 route", "dev", tunDevice)
+	slog.Info("Added default IPv4 route", "dev", tunDevice, "metric", 0)
 
 	// Add default route through TUN (IPv6) if IPv6 is available
 	if ipv6gw != "" {
-		cmd = exec.Command("ip", "-6", "route", "add", "default", "dev", tunDevice, "metric", "100")
+		cmd = exec.Command("ip", "-6", "route", "add", "default", "dev", tunDevice, "metric", "0")
 		if output, err := cmd.CombinedOutput(); err != nil {
 			// IPv6 might fail, log but don't error
 			slog.Warn("Failed to add default IPv6 route", "error", err, "output", string(output))
@@ -225,7 +225,7 @@ func CleanupClientRoutes(info *RouteInfo) {
 		"tun_device", info.TunDevice)
 
 	// Remove default route through TUN (IPv4)
-	cmd := exec.Command("ip", "route", "del", "default", "dev", info.TunDevice, "metric", "100")
+	cmd := exec.Command("ip", "route", "del", "default", "dev", info.TunDevice, "metric", "0")
 	if err := cmd.Run(); err != nil {
 		slog.Warn("Failed to remove default IPv4 route", "error", err)
 	} else {
@@ -234,7 +234,7 @@ func CleanupClientRoutes(info *RouteInfo) {
 
 	// Remove default route through TUN (IPv6)
 	if info.OriginalIPv6GW != "" {
-		cmd = exec.Command("ip", "-6", "route", "del", "default", "dev", info.TunDevice, "metric", "100")
+		cmd = exec.Command("ip", "-6", "route", "del", "default", "dev", info.TunDevice, "metric", "0")
 		if err := cmd.Run(); err != nil {
 			slog.Warn("Failed to remove default IPv6 route", "error", err)
 		} else {
