@@ -198,109 +198,73 @@ func readFramed(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-// HandleTUN handles TUN packets on the server side using a TUN device
-func HandleTUN(channel ssh.Channel, cfg *Config, outbound string) {
+// HandleTUN handles TUN packets on the server side using the shared TUN manager
+func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 	defer channel.Close()
 
-	slog.Info("TUN channel opened")
-
-	// Create and configure TUN device
-	iface, err := CreateTUN(cfg)
+	// Allocate IP for this client
+	clientIP, err := manager.AllocateIP()
 	if err != nil {
-		slog.Error("Failed to create TUN device", "error", err)
+		slog.Error("Failed to allocate IP for client", "error", err)
+		channel.Write([]byte("ERROR: No available IPs\n"))
 		return
 	}
-	defer iface.Close()
 
-	// Enable IP forwarding and NAT
-	if err := EnableIPForwarding(); err != nil {
-		slog.Warn("Failed to enable IP forwarding", "error", err)
+	slog.Info("TUN channel opened", "client_ip", clientIP)
+
+	// Send assigned IP to client
+	ipMsg := fmt.Sprintf("IP:%s\n", clientIP)
+	if _, err := channel.Write([]byte(ipMsg)); err != nil {
+		slog.Error("Failed to send IP to client", "error", err)
+		return
 	}
 
-	if err := EnableNAT(iface.Name(), outbound); err != nil {
-		slog.Warn("Failed to enable NAT", "error", err)
-	}
-
-	slog.Info("Server TUN tunnel started", "device", iface.Name(), "ip", cfg.IP)
+	// Register client with manager
+	route := manager.RegisterClient(clientIP, channel)
+	defer manager.UnregisterClient(clientIP)
 
 	// Statistics
 	var txPackets, rxPackets, txBytes, rxBytes atomic.Int64
 
-	var wg sync.WaitGroup
-	errChan := make(chan error, 2)
-
 	// SSH -> TUN (RX from client)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		for {
-			packet, err := readFramed(channel)
-			if err != nil {
-				if err != io.EOF {
-					errChan <- fmt.Errorf("SSH read error: %w", err)
-				}
-				return
-			}
-
-			// Basic validation
-			if !ValidatePacket(packet) {
-				slog.Debug("Invalid packet dropped", "size", len(packet))
-				continue
-			}
-
-			// Write packet to TUN device - kernel routes it to internet
-			if _, err := iface.Write(packet); err != nil {
-				errChan <- fmt.Errorf("TUN write error: %w", err)
-				return
-			}
-
-			rxPackets.Add(1)
-			rxBytes.Add(int64(len(packet)))
+	// Read packets from client and write to shared TUN device
+	for {
+		select {
+		case <-route.done:
+			slog.Info("TUN channel closed", "client_ip", clientIP,
+				"tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
+				"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load())
+			return
+		default:
 		}
-	}()
 
-	// TUN -> SSH (TX to client)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		buf := make([]byte, MaxPacketSize)
-
-		for {
-			n, err := iface.Read(buf)
-			if err != nil {
-				errChan <- fmt.Errorf("TUN read error: %w", err)
-				return
+		packet, err := readFramed(channel)
+		if err != nil {
+			if err != io.EOF {
+				slog.Debug("SSH read error", "client_ip", clientIP, "error", err)
 			}
-
-			if n == 0 {
-				continue
-			}
-
-			packet := buf[:n]
-
-			// Basic validation
-			if !ValidatePacket(packet) {
-				slog.Debug("Invalid packet dropped", "size", n)
-				continue
-			}
-
-			// Write framed packet to SSH channel
-			if err := writeFramed(channel, packet); err != nil {
-				errChan <- fmt.Errorf("SSH write error: %w", err)
-				return
-			}
-
-			txPackets.Add(1)
-			txBytes.Add(int64(n))
+			slog.Info("TUN channel closed", "client_ip", clientIP,
+				"tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
+				"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load())
+			return
 		}
-	}()
 
-	// Wait for error
-	err = <-errChan
-	slog.Info("TUN channel closed", "tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
-		"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load(), "error", err)
+		// Basic validation
+		if !ValidatePacket(packet) {
+			slog.Debug("Invalid packet dropped", "client_ip", clientIP, "size", len(packet))
+			continue
+		}
 
-	// Cleanup NAT rules
-	DisableNAT(iface.Name(), outbound)
+		// Write packet to shared TUN device - kernel routes it to internet
+		if err := manager.WritePacket(packet); err != nil {
+			slog.Debug("TUN write error", "client_ip", clientIP, "error", err)
+			continue
+		}
+
+		rxPackets.Add(1)
+		rxBytes.Add(int64(len(packet)))
+	}
+
+	// Note: TX (TUN -> SSH) is handled by TUNManager.dispatchPackets()
+	// which routes packets to the correct client based on destination IP
 }
