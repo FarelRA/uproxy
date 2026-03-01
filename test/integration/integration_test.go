@@ -3,6 +3,7 @@ package integration
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"testing"
 	"time"
@@ -15,9 +16,12 @@ import (
 // TestTUNDevicePacketFlow tests the integration between TUN device and packet routing
 func TestTUNDevicePacketFlow(t *testing.T) {
 	// Create TUN manager
-	manager := tun.NewTUNManager("10.0.0.1/24", "fd00::1/64")
+	manager, err := tun.NewTUNManager(&tun.Config{}, "tun0", false)
+	if err != nil {
+		t.Fatalf("Failed to create TUN manager: %v", err)
+	}
 	if manager == nil {
-		t.Fatal("Failed to create TUN manager")
+		t.Fatal("TUN manager is nil")
 	}
 
 	// Register a test client
@@ -39,17 +43,17 @@ func TestTUNDevicePacketFlow(t *testing.T) {
 func TestValidationWithNetworkDiagnostics(t *testing.T) {
 	// Test IP validation
 	validIP := "192.168.1.1"
-	if err := validation.ValidateIPAddress(validIP); err != nil {
-		t.Errorf("Valid IP rejected: %v", err)
+	if !validation.ValidateIPAddress(validIP) {
+		t.Error("Valid IP rejected")
 	}
 
 	invalidIP := "999.999.999.999"
-	if err := validation.ValidateIPAddress(invalidIP); err == nil {
+	if validation.ValidateIPAddress(invalidIP) {
 		t.Error("Invalid IP accepted")
 	}
 
 	// Test diagnostics initialization
-	diag := network.NewDiagnostics()
+	diag := network.NewDiagnostics("example.com:22", slog.Default())
 	if diag == nil {
 		t.Fatal("Failed to create diagnostics")
 	}
@@ -59,7 +63,7 @@ func TestValidationWithNetworkDiagnostics(t *testing.T) {
 	defer cancel()
 
 	result := diag.DiagnoseFailure(ctx)
-	if result.FailureType == "" {
+	if result.FailureType == network.FailureNone {
 		t.Error("Expected failure type to be set")
 	}
 }
@@ -75,8 +79,8 @@ func TestPacketValidationFlow(t *testing.T) {
 		0xc0, 0xa8, 0x00, 0x02, // Dest IP
 	}
 
-	if err := validation.ValidateIPv4Packet(ipv4Packet); err != nil {
-		t.Errorf("Valid IPv4 packet rejected: %v", err)
+	if !validation.ValidateIPv4Packet(ipv4Packet) {
+		t.Error("Valid IPv4 packet rejected")
 	}
 
 	// Test IPv6 packet validation
@@ -89,37 +93,37 @@ func TestPacketValidationFlow(t *testing.T) {
 		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, // Dest IP (last 8 bytes)
 	}
 
-	if err := validation.ValidateIPv6Packet(ipv6Packet); err != nil {
-		t.Errorf("Valid IPv6 packet rejected: %v", err)
+	if !validation.ValidateIPv6Packet(ipv6Packet) {
+		t.Error("Valid IPv6 packet rejected")
 	}
 }
 
 // TestSOCKS5ValidationFlow tests SOCKS5 validation integration
 func TestSOCKS5ValidationFlow(t *testing.T) {
 	// Test SOCKS5 version validation
-	if err := validation.ValidateSOCKS5Version(0x05); err != nil {
-		t.Errorf("Valid SOCKS5 version rejected: %v", err)
+	if !validation.ValidateSOCKS5Version(0x05) {
+		t.Error("Valid SOCKS5 version rejected")
 	}
 
-	if err := validation.ValidateSOCKS5Version(0x04); err == nil {
+	if validation.ValidateSOCKS5Version(0x04) {
 		t.Error("Invalid SOCKS5 version accepted")
 	}
 
 	// Test address type validation
-	if err := validation.ValidateSOCKS5AddressType(0x01); err != nil {
-		t.Errorf("Valid address type rejected: %v", err)
+	if !validation.ValidateSOCKS5AddressType(0x01) {
+		t.Error("Valid address type rejected")
 	}
 
-	if err := validation.ValidateSOCKS5AddressType(0x99); err == nil {
+	if validation.ValidateSOCKS5AddressType(0x99) {
 		t.Error("Invalid address type accepted")
 	}
 
 	// Test command validation
-	if err := validation.ValidateSOCKS5Command(0x01); err != nil {
-		t.Errorf("Valid command rejected: %v", err)
+	if !validation.ValidateSOCKS5Command(0x01) {
+		t.Error("Valid command rejected")
 	}
 
-	if err := validation.ValidateSOCKS5Command(0x99); err == nil {
+	if validation.ValidateSOCKS5Command(0x99) {
 		t.Error("Invalid command accepted")
 	}
 }
@@ -149,15 +153,15 @@ func TestPortValidation(t *testing.T) {
 	// Test valid ports
 	validPorts := []int{1, 80, 443, 8080, 65535}
 	for _, port := range validPorts {
-		if err := validation.ValidatePort(port); err != nil {
-			t.Errorf("Valid port %d rejected: %v", port, err)
+		if !validation.ValidatePort(port) {
+			t.Errorf("Valid port %d rejected", port)
 		}
 	}
 
 	// Test invalid ports
 	invalidPorts := []int{0, -1, 65536, 100000}
 	for _, port := range invalidPorts {
-		if err := validation.ValidatePort(port); err == nil {
+		if validation.ValidatePort(port) {
 			t.Errorf("Invalid port %d accepted", port)
 		}
 	}
@@ -165,9 +169,12 @@ func TestPortValidation(t *testing.T) {
 
 // TestTUNManagerConcurrency tests concurrent operations on TUN manager
 func TestTUNManagerConcurrency(t *testing.T) {
-	manager := tun.NewTUNManager("10.0.0.1/24", "fd00::1/64")
+	manager, err := tun.NewTUNManager(&tun.Config{}, "tun0", false)
+	if err != nil {
+		t.Fatalf("Failed to create TUN manager: %v", err)
+	}
 	if manager == nil {
-		t.Fatal("Failed to create TUN manager")
+		t.Fatal("TUN manager is nil")
 	}
 
 	// Allocate multiple IPs concurrently
@@ -190,7 +197,7 @@ func TestTUNManagerConcurrency(t *testing.T) {
 
 // TestDiagnosticsWithTimeout tests diagnostics with context timeout
 func TestDiagnosticsWithTimeout(t *testing.T) {
-	diag := network.NewDiagnostics()
+	diag := network.NewDiagnostics("example.com:22", slog.Default())
 	if diag == nil {
 		t.Fatal("Failed to create diagnostics")
 	}
@@ -205,7 +212,7 @@ func TestDiagnosticsWithTimeout(t *testing.T) {
 	result := diag.DiagnoseFailure(ctx)
 
 	// Should still return a result even with timeout
-	if result.FailureType == "" {
+	if result.FailureType == network.FailureNone {
 		t.Error("Expected failure type to be set even with timeout")
 	}
 }
@@ -218,8 +225,8 @@ func TestAddressValidationIntegration(t *testing.T) {
 		t.Error("Failed to parse valid IPv4")
 	}
 
-	if err := validation.ValidateIPAddress(ip.String()); err != nil {
-		t.Errorf("Valid IPv4 rejected: %v", err)
+	if !validation.ValidateIPAddress(ip.String()) {
+		t.Error("Valid IPv4 rejected")
 	}
 
 	// Test valid IPv6
@@ -228,7 +235,7 @@ func TestAddressValidationIntegration(t *testing.T) {
 		t.Error("Failed to parse valid IPv6")
 	}
 
-	if err := validation.ValidateIPAddress(ip.String()); err != nil {
-		t.Errorf("Valid IPv6 rejected: %v", err)
+	if !validation.ValidateIPAddress(ip.String()) {
+		t.Error("Valid IPv6 rejected")
 	}
 }
