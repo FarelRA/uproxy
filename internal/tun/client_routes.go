@@ -154,7 +154,7 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 
 	// Add route for VPN server IPv4 through original gateway (so VPN traffic doesn't loop)
 	if serverIPv4 != "" && gw != "" {
-		args := []string{"route", "add", serverIPv4, "via", gw, "dev", iface}
+		args := []string{"route", "replace", serverIPv4, "via", gw, "dev", iface}
 		if srcIP != "" {
 			args = append(args, "src", srcIP)
 		}
@@ -174,7 +174,7 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 
 	// Add route for VPN server IPv6 through original gateway (if IPv6 is available)
 	if serverIPv6 != "" && ipv6gw != "" {
-		args := []string{"-6", "route", "add", serverIPv6, "via", ipv6gw, "dev", ipv6iface}
+		args := []string{"-6", "route", "replace", serverIPv6, "via", ipv6gw, "dev", ipv6iface}
 		if ipv6src != "" {
 			args = append(args, "src", ipv6src)
 		}
@@ -193,7 +193,7 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 	}
 
 	// Add default route through TUN (IPv4) - no metric for highest priority
-	cmd := exec.Command("ip", "route", "add", "default", "dev", tunDevice)
+	cmd := exec.Command("ip", "route", "replace", "default", "dev", tunDevice)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("failed to add default IPv4 route: %w, output: %s", err, output)
 	}
