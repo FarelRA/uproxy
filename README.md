@@ -132,6 +132,14 @@ sudo ./bin/uproxy-client-amd64 \
 ```
 *Note: TUN mode requires root privileges or `CAP_NET_ADMIN` capability.*
 
+**TUN Mode Protocol Support:**
+- **TCP (IPv4/IPv6)**: Full connection tracking with per-flow SSH channels. Supports stateful TCP connections with proper sequence number handling.
+- **UDP (IPv4/IPv6)**: Session-based tracking with 60-second idle timeout. Each unique source/destination pair gets a dedicated SSH channel.
+- **ICMP (IPv4)**: Echo request/reply (ping), destination unreachable, time exceeded (traceroute).
+- **ICMPv6 (IPv6)**: Echo request/reply, neighbor discovery, router advertisements.
+
+All packets are properly constructed with correct IP headers, protocol headers, and checksums. The server routes packets to their destinations and returns responses through the encrypted SSH/KCP tunnel.
+
 *Note: On your first connection, the client will prompt your terminal to accept the server's host key, exactly like OpenSSH.*
 
 ---

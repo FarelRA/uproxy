@@ -200,89 +200,36 @@ func readFramed(r io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-// HandleTUN handles TUN packets on the server side
-func HandleTUN(channel ssh.Channel) {
+// HandleTUN handles TUN packets on the server side with protocol-aware flow management
+func HandleTUN(channel ssh.Channel, outbound string) {
 	defer channel.Close()
 
 	slog.Info("TUN channel opened")
 
-	var txPackets, rxPackets, txBytes, rxBytes atomic.Int64
+	// Create flow handler
+	handler := NewFlowHandler(channel, outbound)
+	defer handler.Close()
 
-	var wg sync.WaitGroup
+	var rxPackets, rxBytes atomic.Int64
 
 	// Read from channel, forward to network
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		for {
-			packet, err := readFramed(channel)
-			if err != nil {
-				if err != io.EOF {
-					slog.Error("Failed to read from channel", "error", err)
-				}
-				return
+	for {
+		packet, err := readFramed(channel)
+		if err != nil {
+			if err != io.EOF {
+				slog.Error("Failed to read from channel", "error", err)
 			}
-
-			rxPackets.Add(1)
-			rxBytes.Add(int64(len(packet)))
-
-			// Parse and route packet
-			if err := routePacket(packet, channel); err != nil {
-				slog.Error("Failed to route packet", "error", err)
-			}
+			break
 		}
-	}()
 
-	wg.Wait()
-	slog.Info("TUN channel closed", "tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
-		"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load())
-}
+		rxPackets.Add(1)
+		rxBytes.Add(int64(len(packet)))
 
-// routePacket routes an IP packet to its destination and sends the response back
-func routePacket(packet []byte, channel ssh.Channel) error {
-	version := IPVersion(packet)
-
-	switch version {
-	case 4:
-		return routeIPv4Packet(packet, channel)
-	case 6:
-		return routeIPv6Packet(packet, channel)
-	default:
-		return fmt.Errorf("unsupported IP version: %d", version)
-	}
-}
-
-// routeIPv4Packet routes an IPv4 packet
-func routeIPv4Packet(packet []byte, channel ssh.Channel) error {
-	src, dst, proto, err := ParseIPv4Header(packet)
-	if err != nil {
-		return err
+		// Handle packet through flow handler
+		if err := handler.HandlePacket(packet); err != nil {
+			slog.Debug("Failed to handle packet", "error", err)
+		}
 	}
 
-	slog.Debug("Routing IPv4 packet", "src", src, "dst", dst, "proto", ProtocolName(proto), "size", len(packet))
-
-	// TODO: Implement actual packet routing
-	// For now, this is a placeholder that would need:
-	// 1. Raw socket creation
-	// 2. Packet injection into the network stack
-	// 3. Response capture and forwarding back through the channel
-
-	// This requires CAP_NET_RAW capability and is complex
-	// A simpler approach would be to use a userspace TCP/IP stack like gvisor/netstack
-
-	return fmt.Errorf("packet routing not yet implemented")
-}
-
-// routeIPv6Packet routes an IPv6 packet
-func routeIPv6Packet(packet []byte, channel ssh.Channel) error {
-	src, dst, proto, err := ParseIPv6Header(packet)
-	if err != nil {
-		return err
-	}
-
-	slog.Debug("Routing IPv6 packet", "src", src, "dst", dst, "proto", ProtocolName(proto), "size", len(packet))
-
-	// TODO: Implement IPv6 packet routing
-	return fmt.Errorf("IPv6 packet routing not yet implemented")
+	slog.Info("TUN channel closed", "rx_packets", rxPackets.Load(), "rx_bytes", rxBytes.Load())
 }
