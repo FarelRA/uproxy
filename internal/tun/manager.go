@@ -312,8 +312,33 @@ func (m *TUNManager) Close() error {
 	}
 	m.clients = make(map[string]*ClientRoute)
 
-	// Cleanup NAT
-	DisableNAT(m.device.Name(), m.outbound)
+	// Cleanup NAT - construct subnet strings from config
+	ipv4Subnet := ""
+	if m.config.IP != "" && m.config.Netmask != "" {
+		// Parse IP and netmask to get network address
+		ip := net.ParseIP(m.config.IP)
+		if ip != nil {
+			ip = ip.To4()
+			if ip != nil {
+				// Convert netmask to CIDR prefix length
+				ipv4Subnet = fmt.Sprintf("%s.%s.%s.0%s", ip[0:1], ip[1:2], ip[2:3], m.config.Netmask)
+			}
+		}
+	}
+
+	ipv6Subnet := ""
+	if m.config.IPv6 != "" {
+		// IPv6 is already in CIDR format (e.g., "fd42:cafe:beef::1/64")
+		// Extract the network prefix
+		if ip, ipnet, err := net.ParseCIDR(m.config.IPv6); err == nil {
+			// Get the network address (zero out host bits)
+			networkIP := ip.Mask(ipnet.Mask)
+			ones, _ := ipnet.Mask.Size()
+			ipv6Subnet = fmt.Sprintf("%s/%d", networkIP.String(), ones)
+		}
+	}
+
+	DisableNAT(m.device.Name(), m.outbound, ipv4Subnet, ipv6Subnet)
 
 	// Close TUN device
 	return m.device.Close()

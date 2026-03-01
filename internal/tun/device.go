@@ -258,7 +258,7 @@ func EnableNAT(tunIface, outboundIface, ipv4Subnet, ipv6Subnet string) error {
 }
 
 // DisableNAT removes NAT/masquerading rules (both IPv4 and IPv6)
-func DisableNAT(tunIface, outboundIface string) {
+func DisableNAT(tunIface, outboundIface, ipv4Subnet, ipv6Subnet string) {
 	if runtime.GOOS != "linux" {
 		return
 	}
@@ -266,22 +266,27 @@ func DisableNAT(tunIface, outboundIface string) {
 	if outboundIface == "" {
 		iface, err := getDefaultInterface()
 		if err != nil {
+			slog.Warn("Failed to get default interface for NAT cleanup", "error", err)
 			return
 		}
 		outboundIface = iface
 	}
 
-	// Remove IPv4 iptables rules (use -D instead of -A)
-	exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE").Run()
+	// Remove IPv4 iptables rules (must match exactly what EnableNAT created)
+	if ipv4Subnet != "" {
+		exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING", "-s", ipv4Subnet, "-o", outboundIface, "-j", "MASQUERADE").Run()
+	}
 	exec.Command("iptables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run()
 	exec.Command("iptables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run()
 
-	// Remove IPv6 ip6tables rules
-	exec.Command("ip6tables", "-t", "nat", "-D", "POSTROUTING", "-o", outboundIface, "-j", "MASQUERADE").Run()
+	// Remove IPv6 ip6tables rules (must match exactly what EnableNAT created)
+	if ipv6Subnet != "" {
+		exec.Command("ip6tables", "-t", "nat", "-D", "POSTROUTING", "-s", ipv6Subnet, "-o", outboundIface, "-j", "MASQUERADE").Run()
+	}
 	exec.Command("ip6tables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run()
 	exec.Command("ip6tables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run()
 
-	slog.Info("NAT disabled", "tun", tunIface, "outbound", outboundIface)
+	slog.Info("NAT disabled and rules cleaned up", "tun", tunIface, "outbound", outboundIface, "ipv4_subnet", ipv4Subnet, "ipv6_subnet", ipv6Subnet)
 }
 
 // getDefaultInterface returns the default network interface
