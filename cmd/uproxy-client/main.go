@@ -69,9 +69,9 @@ func main() {
 
 	// TUN mode flags
 	rootCmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name (tun mode only)")
-	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "", "TUN interface IPv4 address (required for tun mode)")
+	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "172.27.66.2", "TUN interface IPv4 address (required for tun mode)")
 	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask (tun mode only)")
-	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "", "TUN interface IPv6 address with prefix (e.g., fd00::2/64)")
+	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "fd42:cafe:beef::2/64", "TUN interface IPv6 address with prefix (e.g., fd42:cafe:beef::2/64)")
 	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1400, "TUN interface MTU (tun mode only)")
 	rootCmd.Flags().StringVar(&tunRoutes, "tun-routes", "", "Comma-separated routes to add (e.g., 0.0.0.0/0,8.8.8.8/32,::/0)")
 

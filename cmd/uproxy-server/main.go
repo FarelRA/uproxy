@@ -79,9 +79,9 @@ func main() {
 
 	// TUN mode flags (server side)
 	rootCmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name for server")
-	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "10.0.0.1", "TUN interface IPv4 address for server")
+	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "172.27.66.1", "TUN interface IPv4 address for server")
 	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask")
-	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "", "TUN interface IPv6 address with prefix (e.g., fd00::1/64)")
+	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "fd42:cafe:beef::1/64", "TUN interface IPv6 address with prefix (e.g., fd42:cafe:beef::1/64)")
 	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1280, "TUN interface MTU")
 
 	if err := rootCmd.Execute(); err != nil {
