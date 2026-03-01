@@ -6,6 +6,8 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+
+	"uproxy/internal/routing"
 )
 
 // RouteInfo stores routing information for cleanup
@@ -23,57 +25,20 @@ type RouteInfo struct {
 
 // GetDefaultGateway returns the default gateway IP, interface, and source IP
 func GetDefaultGateway() (gateway, iface, srcIP string, err error) {
-	cmd := exec.Command("ip", "route", "show", "default")
-	output, err := cmd.CombinedOutput()
+	info, err := routing.GetDefaultRoute()
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to get default route: %w", err)
+		return "", "", "", err
 	}
-
-	// Parse output like: "default via 10.0.0.1 dev wlan0 proto dhcp src 10.0.0.118 metric 600"
-	fields := strings.Fields(string(output))
-	for i, field := range fields {
-		if field == "via" && i+1 < len(fields) {
-			gateway = fields[i+1]
-		}
-		if field == "dev" && i+1 < len(fields) {
-			iface = fields[i+1]
-		}
-		if field == "src" && i+1 < len(fields) {
-			srcIP = fields[i+1]
-		}
-	}
-
-	if gateway == "" || iface == "" {
-		return "", "", "", fmt.Errorf("could not parse default gateway")
-	}
-
-	return gateway, iface, srcIP, nil
+	return info.Gateway, info.Interface, info.SrcIP, nil
 }
 
 // GetDefaultIPv6Gateway returns the default IPv6 gateway, interface, and source IP
 func GetDefaultIPv6Gateway() (gateway, iface, srcIP string, err error) {
-	cmd := exec.Command("ip", "-6", "route", "show", "default")
-	output, err := cmd.CombinedOutput()
+	info, err := routing.GetDefaultIPv6Route()
 	if err != nil {
-		// IPv6 might not be configured, that's okay
-		return "", "", "", nil
+		return "", "", "", err
 	}
-
-	// Parse output like: "default via fe80::1 dev wlan0 proto ra src fd:cafe:dead::9c6 metric 600"
-	fields := strings.Fields(string(output))
-	for i, field := range fields {
-		if field == "via" && i+1 < len(fields) {
-			gateway = fields[i+1]
-		}
-		if field == "dev" && i+1 < len(fields) {
-			iface = fields[i+1]
-		}
-		if field == "src" && i+1 < len(fields) {
-			srcIP = fields[i+1]
-		}
-	}
-
-	return gateway, iface, srcIP, nil
+	return info.Gateway, info.Interface, info.SrcIP, nil
 }
 
 // ResolveServerIPs resolves a server address (hostname:port or IP:port) to IPv4 and IPv6

@@ -6,8 +6,9 @@ import (
 	"log/slog"
 	"net"
 	"os/exec"
-	"strings"
 	"time"
+
+	"uproxy/internal/routing"
 )
 
 // FailureType represents the type of network failure detected
@@ -129,31 +130,12 @@ func (d *Diagnostics) getDefaultRoute(ctx context.Context) (gateway, srcIP, ifac
 		host = d.serverAddr
 	}
 
-	cmd := exec.CommandContext(ctx, "ip", "route", "get", host)
-	output, err := cmd.Output()
+	info, err := routing.GetRouteToHost(ctx, host)
 	if err != nil {
-		return "", "", "", fmt.Errorf("failed to get route: %w", err)
+		return "", "", "", err
 	}
 
-	// Parse output: "x.x.x.x via y.y.y.y dev eth0 src z.z.z.z"
-	fields := strings.Fields(string(output))
-	for i, field := range fields {
-		if field == "via" && i+1 < len(fields) {
-			gateway = fields[i+1]
-		}
-		if field == "dev" && i+1 < len(fields) {
-			iface = fields[i+1]
-		}
-		if field == "src" && i+1 < len(fields) {
-			srcIP = fields[i+1]
-		}
-	}
-
-	if gateway == "" || iface == "" {
-		return "", "", "", fmt.Errorf("could not parse route information")
-	}
-
-	return gateway, srcIP, iface, nil
+	return info.Gateway, info.SrcIP, info.Interface, nil
 }
 
 // isInterfaceUp checks if a network interface is up

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"golang.org/x/crypto/ssh"
+	"uproxy/internal/framing"
 )
 
 const (
@@ -221,48 +222,14 @@ func openTUNChannel(client *ssh.Client) (ssh.Channel, error) {
 	return channel, nil
 }
 
-// writeFramed writes a length-prefixed packet to the channel
+// writeFramed is a wrapper around framing.WriteFramed for backward compatibility
 func writeFramed(w io.Writer, data []byte) error {
-	if len(data) > 65535 {
-		return fmt.Errorf("packet too large: %d bytes", len(data))
-	}
-
-	// Write 2-byte length prefix
-	length := uint16(len(data))
-	lengthBuf := []byte{byte(length >> 8), byte(length)}
-
-	if _, err := w.Write(lengthBuf); err != nil {
-		return err
-	}
-
-	// Write data
-	if _, err := w.Write(data); err != nil {
-		return err
-	}
-
-	return nil
+	return framing.WriteFramed(w, data)
 }
 
-// readFramed reads a length-prefixed packet from the channel
+// readFramed is a wrapper around framing.ReadFramed for backward compatibility
 func readFramed(r io.Reader) ([]byte, error) {
-	// Read 2-byte length prefix
-	lengthBuf := make([]byte, 2)
-	if _, err := io.ReadFull(r, lengthBuf); err != nil {
-		return nil, err
-	}
-
-	length := uint16(lengthBuf[0])<<8 | uint16(lengthBuf[1])
-	if length == 0 {
-		return nil, fmt.Errorf("invalid packet length: 0")
-	}
-
-	// Read data
-	data := make([]byte, length)
-	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, err
-	}
-
-	return data, nil
+	return framing.ReadFramed(r)
 }
 
 // HandleTUN handles TUN packets on the server side using the shared TUN manager
