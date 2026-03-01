@@ -137,6 +137,20 @@ build_args() {
         # Auto mode - let the binary decide based on privileges
         args+=(--mode "${MODE:-auto}")
         args+=(--listen "${LISTEN:-127.0.0.1:1080}")
+        
+        # If running as root, provide default TUN parameters for auto-selected TUN mode
+        if [[ $EUID -eq 0 ]]; then
+            args+=(--tun-ip "${TUN_IP:-10.0.0.2}")
+            args+=(--tun-name "${TUN_NAME:-utun0}")
+            args+=(--tun-netmask "${TUN_NETMASK:-255.255.255.0}")
+            args+=(--tun-mtu "${TUN_MTU:-1400}")
+            if [[ -n "${TUN_IPV6:-}" ]]; then
+                args+=(--tun-ipv6 "$TUN_IPV6")
+            fi
+            if [[ -n "${TUN_ROUTES:-}" ]]; then
+                args+=(--tun-routes "$TUN_ROUTES")
+            fi
+        fi
     fi
     
     # Log level
