@@ -26,6 +26,10 @@ type ResilientPacketConn struct {
 	rxPackets int64
 	drops     int64
 	rebinds   int64
+
+	// Connectivity monitoring
+	lastRxTime atomic.Value // time.Time
+	lastTxTime atomic.Value // time.Time
 }
 
 func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Duration, sockBuf int) *ResilientPacketConn {
@@ -38,10 +42,17 @@ func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Durat
 		reconnectInt: reconnectInterval,
 		sockBuf:      sockBuf,
 	}
+
+	// Initialize activity times
+	now := time.Now()
+	r.lastRxTime.Store(now)
+	r.lastTxTime.Store(now)
+
 	r.reconnectSync()
 
-	// Spin up telemetry logger
+	// Spin up telemetry logger and connectivity monitor
 	go r.telemetryLoop()
+	go r.connectivityMonitor()
 
 	return r
 }
@@ -84,6 +95,65 @@ func (r *ResilientPacketConn) telemetryLoop() {
 	}
 }
 
+// connectivityMonitor monitors packet activity and detects connectivity issues
+func (r *ResilientPacketConn) connectivityMonitor() {
+	const (
+		checkInterval     = 5 * time.Second  // How often to check connectivity
+		idleTimeout       = 30 * time.Second // Max time without RX packets before considering connection dead
+		asymmetricTimeout = 20 * time.Second // Max time with TX but no RX (ISP down, firewall, etc.)
+	)
+
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		r.mu.RLock()
+		closed := r.closed
+		r.mu.RUnlock()
+		if closed {
+			return
+		}
+
+		now := time.Now()
+
+		// Get last activity times
+		lastRx, okRx := r.lastRxTime.Load().(time.Time)
+		lastTx, okTx := r.lastTxTime.Load().(time.Time)
+
+		if !okRx || !okTx {
+			continue
+		}
+
+		timeSinceRx := now.Sub(lastRx)
+		timeSinceTx := now.Sub(lastTx)
+
+		// Scenario 1: Complete idle (no TX or RX) - this is normal, no action needed
+		if timeSinceRx > idleTimeout && timeSinceTx > idleTimeout {
+			continue
+		}
+
+		// Scenario 2: Asymmetric traffic - we're sending but not receiving
+		// This indicates: ISP down, firewall blocking, NAT timeout, mobile network issue
+		if timeSinceTx < asymmetricTimeout && timeSinceRx > asymmetricTimeout {
+			slog.Warn("Connectivity issue detected: sending packets but not receiving",
+				"layer", "resilient",
+				"time_since_rx", timeSinceRx.Round(time.Second),
+				"time_since_tx", timeSinceTx.Round(time.Second))
+			r.triggerReconnect()
+			continue
+		}
+
+		// Scenario 3: Long idle on RX but recent TX - potential connection stale
+		if timeSinceTx < checkInterval && timeSinceRx > idleTimeout {
+			slog.Warn("Connectivity issue detected: recent TX but no RX for extended period",
+				"layer", "resilient",
+				"time_since_rx", timeSinceRx.Round(time.Second))
+			r.triggerReconnect()
+			continue
+		}
+	}
+}
+
 func (r *ResilientPacketConn) triggerReconnect() {
 	r.mu.Lock()
 	if r.reconnecting || r.closed {
@@ -95,28 +165,6 @@ func (r *ResilientPacketConn) triggerReconnect() {
 
 	atomic.AddInt64(&r.drops, 1)
 	slog.Warn("Network interface drop detected. Attempting to rebind socket...", "layer", "resilient")
-
-	go func() {
-		defer func() {
-			r.mu.Lock()
-			r.reconnecting = false
-			r.mu.Unlock()
-		}()
-		r.reconnectSync()
-	}()
-}
-
-// ForceRebind forces the socket to rebind (useful when network changes are detected externally)
-func (r *ResilientPacketConn) ForceRebind() {
-	r.mu.Lock()
-	if r.reconnecting || r.closed {
-		r.mu.Unlock()
-		return
-	}
-	r.reconnecting = true
-	r.mu.Unlock()
-
-	slog.Info("Network change detected, rebinding socket...", "layer", "resilient")
 
 	go func() {
 		defer func() {
@@ -202,6 +250,7 @@ func (r *ResilientPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err erro
 
 		atomic.AddInt64(&r.rxBytes, int64(n))
 		atomic.AddInt64(&r.rxPackets, 1)
+		r.lastRxTime.Store(time.Now())
 		return n, addr, nil
 	}
 }
@@ -229,6 +278,7 @@ func (r *ResilientPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error
 
 	atomic.AddInt64(&r.txBytes, int64(n))
 	atomic.AddInt64(&r.txPackets, 1)
+	r.lastTxTime.Store(time.Now())
 	return n, nil
 }
 

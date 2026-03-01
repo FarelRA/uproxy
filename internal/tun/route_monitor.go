@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	maxRetries   = 150
-	retryDelay   = 100 * time.Millisecond
-	monitorDelay = 2 * time.Second
+	maxRetries = 150
+	retryDelay = 100 * time.Millisecond
 )
 
 // RouteMonitor monitors network changes and maintains routes
@@ -21,18 +20,16 @@ type RouteMonitor struct {
 	serverAddr string
 	tunDevice  string
 	routeInfo  *RouteInfo
-	rebindFunc func() // Optional callback to rebind socket on network change
 	ctx        context.Context
 	cancel     context.CancelFunc
 }
 
 // NewRouteMonitor creates a new route monitor
-func NewRouteMonitor(serverAddr, tunDevice string, rebindFunc func()) *RouteMonitor {
+func NewRouteMonitor(serverAddr, tunDevice string) *RouteMonitor {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &RouteMonitor{
 		serverAddr: serverAddr,
 		tunDevice:  tunDevice,
-		rebindFunc: rebindFunc,
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -186,10 +183,6 @@ func (rm *RouteMonitor) monitorNetworkChanges() {
 		return
 	}
 
-	// Periodic check ticker
-	ticker := time.NewTicker(monitorDelay)
-	defer ticker.Stop()
-
 	// Monitor output in goroutine
 	changeChan := make(chan bool, 10)
 	go func() {
@@ -220,10 +213,6 @@ func (rm *RouteMonitor) monitorNetworkChanges() {
 		case <-changeChan:
 			// Network change detected, debounce and check
 			time.Sleep(100 * time.Millisecond)
-			rm.checkAndUpdateRoutes(&lastGW, &lastSrcIP, &lastIPv6GW, &lastIPv6SrcIP)
-
-		case <-ticker.C:
-			// Periodic check to ensure routes are still valid
 			rm.checkAndUpdateRoutes(&lastGW, &lastSrcIP, &lastIPv6GW, &lastIPv6SrcIP)
 		}
 	}
@@ -289,11 +278,6 @@ func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, last
 	*lastSrcIP = srcIP
 	*lastIPv6GW = ipv6gw
 	*lastIPv6SrcIP = ipv6src
-
-	// Trigger socket rebind if callback is provided
-	if rm.rebindFunc != nil {
-		rm.rebindFunc()
-	}
 
 	rm.logRoutesConfigured()
 	slog.Info("WAN route changed, routes updated")
