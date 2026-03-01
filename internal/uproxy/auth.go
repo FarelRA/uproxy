@@ -15,16 +15,31 @@ import (
 )
 
 // LoadPrivateKey attempts to load the SSH client identity file.
-// It prioritizes id_ed25519, falling back to id_rsa if necessary.
-func LoadPrivateKey() (ssh.Signer, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get user home directory: %w", err)
-	}
+// If privateKeyPath is specified, it loads that specific file.
+// If sshDir is specified, it looks for id_ed25519 or id_rsa in that directory.
+// Otherwise, it defaults to ~/.ssh directory.
+func LoadPrivateKey(sshDir, privateKeyPath string) (ssh.Signer, error) {
+	var paths []string
 
-	paths := []string{
-		filepath.Join(home, ".ssh", "id_ed25519"),
-		filepath.Join(home, ".ssh", "id_rsa"),
+	// If specific private key path is provided, use only that
+	if privateKeyPath != "" {
+		paths = []string{privateKeyPath}
+	} else {
+		// Determine SSH directory
+		dir := sshDir
+		if dir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get user home directory: %w", err)
+			}
+			dir = filepath.Join(home, ".ssh")
+		}
+
+		// Try common key names in order of preference
+		paths = []string{
+			filepath.Join(dir, "id_ed25519"),
+			filepath.Join(dir, "id_rsa"),
+		}
 	}
 
 	var rawKey []byte
@@ -37,7 +52,10 @@ func LoadPrivateKey() (ssh.Signer, error) {
 		}
 	}
 	if rawKey == nil {
-		return nil, errors.New("could not find id_ed25519 or id_rsa in ~/.ssh")
+		if privateKeyPath != "" {
+			return nil, fmt.Errorf("could not read private key from %s", privateKeyPath)
+		}
+		return nil, errors.New("could not find id_ed25519 or id_rsa in SSH directory")
 	}
 
 	signer, err := ssh.ParsePrivateKey(rawKey)
@@ -50,14 +68,24 @@ func LoadPrivateKey() (ssh.Signer, error) {
 }
 
 // CheckAuthorizedKeys verifies if the incoming client's public key matches any entry
-// in the server user's ~/.ssh/authorized_keys file.
-func CheckAuthorizedKeys(pubKey ssh.PublicKey) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get user home directory: %w", err)
+// in the server user's authorized_keys file.
+// If authorizedKeysPath is specified, it uses that file.
+// If sshDir is specified, it looks for authorized_keys in that directory.
+// Otherwise, it defaults to ~/.ssh/authorized_keys.
+func CheckAuthorizedKeys(pubKey ssh.PublicKey, sshDir, authorizedKeysPath string) error {
+	authFile := authorizedKeysPath
+	if authFile == "" {
+		dir := sshDir
+		if dir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("failed to get user home directory: %w", err)
+			}
+			dir = filepath.Join(home, ".ssh")
+		}
+		authFile = filepath.Join(dir, "authorized_keys")
 	}
 
-	authFile := filepath.Join(home, ".ssh", "authorized_keys")
 	b, err := os.ReadFile(authFile)
 	if err != nil {
 		return fmt.Errorf("could not read authorized_keys at %s: %w", authFile, err)
@@ -70,35 +98,45 @@ func CheckAuthorizedKeys(pubKey ssh.PublicKey) error {
 			continue
 		}
 		if string(pub.Marshal()) == string(pubKey.Marshal()) {
-			slog.Debug("Client public key matched authorized_keys entry", "type", pubKey.Type())
+			slog.Debug("Client public key matched authorized_keys entry", "type", pubKey.Type(), "file", authFile)
 			return nil
 		}
 		b = rest
 	}
-	return errors.New("public key not found in authorized_keys")
+	return fmt.Errorf("public key not found in authorized_keys (%s)", authFile)
 }
 
 // VerifyKnownHost acts as the client-side TOFU (Trust On First Use) mechanism.
-// It strictly validates the server's host key against ~/.ssh/known_hosts.
-func VerifyKnownHost(address string, remote net.Addr, pubKey ssh.PublicKey) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get user home directory: %w", err)
+// It strictly validates the server's host key against known_hosts file.
+// If knownHostsPath is specified, it uses that file.
+// If sshDir is specified, it looks for known_hosts in that directory.
+// Otherwise, it defaults to ~/.ssh/known_hosts.
+func VerifyKnownHost(address string, remote net.Addr, pubKey ssh.PublicKey, sshDir, knownHostsPath string) error {
+	khPath := knownHostsPath
+	if khPath == "" {
+		dir := sshDir
+		if dir == "" {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return fmt.Errorf("failed to get user home directory: %w", err)
+			}
+			dir = filepath.Join(home, ".ssh")
+		}
+		khPath = filepath.Join(dir, "known_hosts")
 	}
-	knownHostsPath := filepath.Join(home, ".ssh", "known_hosts")
 
 	// Ensure known_hosts exists to prevent parsing panics
-	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(filepath.Dir(knownHostsPath), 0700); err == nil {
-			_ = os.WriteFile(knownHostsPath, []byte(""), 0600)
+	if _, err := os.Stat(khPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(filepath.Dir(khPath), 0700); err == nil {
+			_ = os.WriteFile(khPath, []byte(""), 0600)
 		}
 	}
 
-	hostKeyCallback, err := knownhosts.New(knownHostsPath)
+	hostKeyCallback, err := knownhosts.New(khPath)
 	if err == nil {
 		err = hostKeyCallback(address, remote, pubKey)
 		if err == nil {
-			slog.Debug("Server host key verified successfully", "address", address)
+			slog.Debug("Server host key verified successfully", "address", address, "file", khPath)
 			return nil // Server is strictly trusted
 		}
 
@@ -119,7 +157,7 @@ func VerifyKnownHost(address string, remote net.Addr, pubKey ssh.PublicKey) erro
 	}
 
 	normalizedHost := knownhosts.Normalize(address)
-	return promptAndAddKnownHost(normalizedHost, pubKey, knownHostsPath)
+	return promptAndAddKnownHost(normalizedHost, pubKey, khPath)
 }
 
 // promptAndAddKnownHost pauses the background daemon to interactively ask the user

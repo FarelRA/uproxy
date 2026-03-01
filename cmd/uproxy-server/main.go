@@ -26,6 +26,9 @@ func main() {
 	var tcpBufSize, udpSockBuf int
 	var kcpCfg kcp.Config
 
+	// SSH configuration
+	var sshDir, sshPrivateKey, sshAuthorizedKeys string
+
 	// TUN configuration for server side
 	var tunName, tunIP, tunNetmask, tunIPv6 string
 	var tunMTU int
@@ -45,7 +48,7 @@ func main() {
 				MTU:     tunMTU,
 			}
 
-			return runServer(listenAddr, outbound, idleTimeout, proxyDialTimeout, reconnectInterval, udpSockBuf, &kcpCfg, tunCfg)
+			return runServer(listenAddr, outbound, idleTimeout, proxyDialTimeout, reconnectInterval, udpSockBuf, &kcpCfg, tunCfg, sshDir, sshPrivateKey, sshAuthorizedKeys)
 		},
 	}
 
@@ -53,6 +56,11 @@ func main() {
 	rootCmd.Flags().StringVarP(&outbound, "outbound", "o", "", "Outbound interface for dialing targets (e.g., tun0)")
 	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	rootCmd.Flags().StringVar(&logFormat, "log-format", "console", "Log format (console, json)")
+
+	// SSH configuration flags
+	rootCmd.Flags().StringVar(&sshDir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
+	rootCmd.Flags().StringVar(&sshPrivateKey, "ssh-private-key", "", "SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)")
+	rootCmd.Flags().StringVar(&sshAuthorizedKeys, "ssh-authorized-keys", "", "SSH authorized_keys file (default: ~/.ssh/authorized_keys)")
 
 	rootCmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
 	rootCmd.Flags().DurationVar(&proxyDialTimeout, "proxy-dial-timeout", 5*time.Second, "Timeout for dialing upstream SOCKS5 targets")
@@ -83,11 +91,11 @@ func main() {
 }
 
 // runServer initializes the ResilientPacketConn, KCP listener, and SSH subsystem.
-func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config) error {
+func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, sshDir, sshPrivateKey, sshAuthorizedKeys string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	signer, err := uproxy.LoadPrivateKey()
+	signer, err := uproxy.LoadPrivateKey(sshDir, sshPrivateKey)
 	if err != nil {
 		return fmt.Errorf("failed to load SSH key: %v", err)
 	}
@@ -100,7 +108,7 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 				"key_type", key.Type(),
 				"fingerprint", ssh.FingerprintSHA256(key))
 
-			if err := uproxy.CheckAuthorizedKeys(key); err != nil {
+			if err := uproxy.CheckAuthorizedKeys(key, sshDir, sshAuthorizedKeys); err != nil {
 				slog.Warn("SSH authentication failed",
 					"remote_addr", conn.RemoteAddr(),
 					"key_type", key.Type(),

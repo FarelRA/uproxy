@@ -30,6 +30,9 @@ func main() {
 	var tcpBufSize, udpSockBuf int
 	var kcpCfg kcp.Config
 
+	// SSH configuration
+	var sshDir, sshPrivateKey, sshKnownHosts string
+
 	// TUN mode configuration
 	var tunName, tunIP, tunNetmask, tunIPv6, tunRoutes string
 	var tunMTU int
@@ -49,7 +52,7 @@ func main() {
 				MTU:     tunMTU,
 			}
 
-			return runClient(mode, listenAddr, serverAddr, idleTimeout, sshTimeout, reconnectInterval, udpSockBuf, &kcpCfg, &tunCfg, tunRoutes)
+			return runClient(mode, listenAddr, serverAddr, idleTimeout, sshTimeout, reconnectInterval, udpSockBuf, &kcpCfg, &tunCfg, tunRoutes, sshDir, sshPrivateKey, sshKnownHosts)
 		},
 	}
 
@@ -58,6 +61,11 @@ func main() {
 	rootCmd.Flags().StringVarP(&serverAddr, "server", "s", "", "Remote server address (e.g., 203.0.113.50:6000)")
 	rootCmd.Flags().StringVar(&logLevel, "log-level", "info", "Log level (debug, info, warn, error)")
 	rootCmd.Flags().StringVar(&logFormat, "log-format", "console", "Log format (console, json)")
+
+	// SSH configuration flags
+	rootCmd.Flags().StringVar(&sshDir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
+	rootCmd.Flags().StringVar(&sshPrivateKey, "ssh-private-key", "", "SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)")
+	rootCmd.Flags().StringVar(&sshKnownHosts, "ssh-known-hosts", "", "SSH known_hosts file (default: ~/.ssh/known_hosts)")
 
 	// TUN mode flags
 	rootCmd.Flags().StringVar(&tunName, "tun-name", "utun0", "TUN device name (tun mode only)")
@@ -91,7 +99,7 @@ func main() {
 }
 
 // runClient initializes the background connection loop and the foreground proxy (SOCKS5 or TUN).
-func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, tunRoutes string) error {
+func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, tunRoutes, sshDir, sshPrivateKey, sshKnownHosts string) error {
 	// Auto-detect mode based on privileges
 	if mode == "auto" {
 		if uproxy.IsRoot() {
@@ -123,7 +131,7 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	signer, err := uproxy.LoadPrivateKey()
+	signer, err := uproxy.LoadPrivateKey(sshDir, sshPrivateKey)
 	if err != nil {
 		return fmt.Errorf("failed to load SSH key: %v", err)
 	}
@@ -191,8 +199,10 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 				Auth: []ssh.AuthMethod{
 					ssh.PublicKeys(signer),
 				},
-				HostKeyCallback: uproxy.VerifyKnownHost,
-				Timeout:         sshTimeout,
+				HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+					return uproxy.VerifyKnownHost(hostname, remote, key, sshDir, sshKnownHosts)
+				},
+				Timeout: sshTimeout,
 			}
 
 			slog.Info("Attempting SSH authentication",
