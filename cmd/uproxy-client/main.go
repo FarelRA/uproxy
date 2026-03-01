@@ -34,7 +34,7 @@ func main() {
 	var sshDir, sshPrivateKey, sshKnownHosts string
 
 	// TUN mode configuration
-	var tunName, tunIP, tunNetmask, tunIPv6, tunRoutes string
+	var tunName, tunRoutes string
 	var tunMTU int
 
 	var rootCmd = &cobra.Command{
@@ -45,11 +45,9 @@ func main() {
 			uproxy.TCPBufSize = tcpBufSize
 
 			tunCfg := tun.Config{
-				Name:    tunName,
-				IP:      tunIP,
-				Netmask: tunNetmask,
-				IPv6:    tunIPv6,
-				MTU:     tunMTU,
+				Name: tunName,
+				MTU:  tunMTU,
+				// IP, Netmask, and IPv6 will be assigned by the server
 			}
 
 			return runClient(mode, listenAddr, serverAddr, idleTimeout, sshTimeout, reconnectInterval, udpSockBuf, &kcpCfg, &tunCfg, tunRoutes, sshDir, sshPrivateKey, sshKnownHosts)
@@ -69,11 +67,8 @@ func main() {
 
 	// TUN mode flags
 	rootCmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name (tun mode only)")
-	rootCmd.Flags().StringVar(&tunIP, "tun-ip", "172.27.66.2", "TUN interface IPv4 address (required for tun mode)")
-	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask (tun mode only)")
-	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "fd42:cafe:beef::2/64", "TUN interface IPv6 address with prefix (e.g., fd42:cafe:beef::2/64)")
 	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1400, "TUN interface MTU (tun mode only)")
-	rootCmd.Flags().StringVar(&tunRoutes, "tun-routes", "", "Comma-separated routes to add (e.g., 0.0.0.0/0,8.8.8.8/32,::/0)")
+	rootCmd.Flags().StringVar(&tunRoutes, "tun-routes", "", "Comma-separated routes to add (e.g., 0.0.0.0/0,8.8.8.8/32,::/0). Note: IP addresses are assigned by the server")
 
 	rootCmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
 	rootCmd.Flags().DurationVar(&sshTimeout, "ssh-timeout", 10*time.Second, "Timeout for the initial SSH handshake")

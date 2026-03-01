@@ -19,7 +19,28 @@ const (
 
 // ServeTUN starts the TUN tunnel, reading packets from the TUN device and forwarding them through SSH
 func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes string) error {
-	// Create and configure TUN device
+	// Open SSH channel first to receive server-assigned IPs
+	sshChan, err := openTUNChannel(sshClient)
+	if err != nil {
+		return fmt.Errorf("failed to open SSH channel: %w", err)
+	}
+	defer sshChan.Close()
+
+	// Read server-assigned IPs
+	assignedIPv4, assignedIPv6, err := readServerAssignedIPs(sshChan)
+	if err != nil {
+		return fmt.Errorf("failed to read server-assigned IPs: %w", err)
+	}
+
+	// Update config with server-assigned IPs
+	cfg.IP = assignedIPv4
+	if assignedIPv6 != "" {
+		cfg.IPv6 = assignedIPv6 + "/64" // Standard /64 prefix for IPv6
+	}
+
+	slog.Info("Received server-assigned IPs", "ipv4", assignedIPv4, "ipv6", assignedIPv6)
+
+	// Create and configure TUN device with server-assigned IPs
 	iface, err := CreateTUN(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to create TUN device: %w", err)
@@ -38,13 +59,6 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 
 	// Statistics
 	var txPackets, rxPackets, txBytes, rxBytes atomic.Int64
-
-	// Channel for SSH channel
-	sshChan, err := openTUNChannel(sshClient)
-	if err != nil {
-		return fmt.Errorf("failed to open SSH channel: %w", err)
-	}
-	defer sshChan.Close()
 
 	var wg sync.WaitGroup
 	errChan := make(chan error, 2)
@@ -144,6 +158,40 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 
 // ErrTUNNotSupported indicates the server doesn't support TUN mode
 var ErrTUNNotSupported = fmt.Errorf("server does not support TUN mode")
+
+// readServerAssignedIPs reads the IP addresses assigned by the server
+func readServerAssignedIPs(channel ssh.Channel) (ipv4 string, ipv6 string, err error) {
+	// Read IP assignment message from server
+	// Format: "IPv4:x.x.x.x\n" or "IPv4:x.x.x.x\nIPv6:xxxx::x\n"
+	buf := make([]byte, 256)
+	n, err := channel.Read(buf)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to read IP assignment: %w", err)
+	}
+
+	msg := string(buf[:n])
+
+	// Check for error message
+	if strings.HasPrefix(msg, "ERROR:") {
+		return "", "", fmt.Errorf("server error: %s", strings.TrimSpace(msg[6:]))
+	}
+
+	// Parse IP assignment
+	lines := strings.Split(strings.TrimSpace(msg), "\n")
+	for _, line := range lines {
+		if strings.HasPrefix(line, "IPv4:") {
+			ipv4 = strings.TrimSpace(line[5:])
+		} else if strings.HasPrefix(line, "IPv6:") {
+			ipv6 = strings.TrimSpace(line[5:])
+		}
+	}
+
+	if ipv4 == "" {
+		return "", "", fmt.Errorf("server did not assign IPv4 address")
+	}
+
+	return ipv4, ipv6, nil
+}
 
 // openTUNChannel opens an SSH channel for TUN traffic
 func openTUNChannel(client *ssh.Client) (ssh.Channel, error) {

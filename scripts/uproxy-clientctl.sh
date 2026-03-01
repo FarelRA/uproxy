@@ -112,45 +112,17 @@ build_args() {
     fi
     args+=(--server "$SERVER")
     
-    # Mode selection: if TUN_IP is set, use TUN mode; otherwise force SOCKS5
-    if [[ -n "${TUN_IP:-}" ]]; then
-        # TUN mode - TUN_IP is required
-        args+=(--mode "${MODE:-tun}")
-        args+=(--tun-ip "$TUN_IP")
-        
-        # Optional TUN parameters
-        if [[ -n "${TUN_IPV6:-}" ]]; then
-            args+=(--tun-ipv6 "$TUN_IPV6")
-        fi
-        args+=(--tun-name "${TUN_NAME:-utun0}")
-        args+=(--tun-netmask "${TUN_NETMASK:-255.255.255.0}")
-        args+=(--tun-mtu "${TUN_MTU:-1400}")
-        if [[ -n "${TUN_ROUTES:-}" ]]; then
-            args+=(--tun-routes "$TUN_ROUTES")
-        fi
-        
-        # Listen address is optional for TUN mode but can be used for fallback
-        if [[ -n "${LISTEN:-}" ]]; then
-            args+=(--listen "$LISTEN")
-        fi
-    else
-        # Auto mode - let the binary decide based on privileges
-        args+=(--mode "${MODE:-auto}")
-        args+=(--listen "${LISTEN:-127.0.0.1:1080}")
-        
-        # If running as root, provide default TUN parameters for auto-selected TUN mode
-        if [[ $EUID -eq 0 ]]; then
-            args+=(--tun-ip "${TUN_IP:-10.0.0.2}")
-            args+=(--tun-name "${TUN_NAME:-utun0}")
-            args+=(--tun-netmask "${TUN_NETMASK:-255.255.255.0}")
-            args+=(--tun-mtu "${TUN_MTU:-1400}")
-            if [[ -n "${TUN_IPV6:-}" ]]; then
-                args+=(--tun-ipv6 "$TUN_IPV6")
-            fi
-            if [[ -n "${TUN_ROUTES:-}" ]]; then
-                args+=(--tun-routes "$TUN_ROUTES")
-            fi
-        fi
+    # Mode selection: auto mode by default (binary decides based on privileges)
+    args+=(--mode "${MODE:-auto}")
+    
+    # SOCKS5 listen address (used for SOCKS5 mode or as fallback)
+    args+=(--listen "${LISTEN:-127.0.0.1:1080}")
+    
+    # TUN parameters (IPs are assigned by server, only device config needed)
+    args+=(--tun-name "${TUN_NAME:-tun0}")
+    args+=(--tun-mtu "${TUN_MTU:-1400}")
+    if [[ -n "${TUN_ROUTES:-}" ]]; then
+        args+=(--tun-routes "$TUN_ROUTES")
     fi
     
     # Log level
