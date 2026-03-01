@@ -9,6 +9,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"uproxy/internal/config"
 	"uproxy/internal/uproxy"
 )
 
@@ -43,7 +44,7 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 	uproxy.OptimizeTCPConn(targetConn)
 
 	// Proxy bidirectionally with zero-copy pools and full telemetry
-	uproxy.ProxyBidi(ctx, uproxy.NewChannelConn(channel, targetConn.LocalAddr(), remoteAddr), targetConn, "socks5_server_tcp", targetAddr)
+	uproxy.ProxyBidi(ctx, uproxy.NewChannelConn(channel, targetConn.LocalAddr(), remoteAddr), targetConn, "socks5_server_tcp", targetAddr, config.DefaultTCPBufSize)
 }
 
 // DialTCP runs on the client side to establish a new TCP SSH channel to the server.

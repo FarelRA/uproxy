@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"strconv"
+	"uproxy/internal/config"
 	"uproxy/internal/uproxy"
 )
 
@@ -112,7 +113,7 @@ func handleSOCKS5Client(conn net.Conn, dialTCP func(string) (net.Conn, error), d
 		conn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 
 		// Delegate to ProxyBidi for telemetry
-		uproxy.ProxyBidi(context.Background(), conn, remote, "socks5_client_tcp", targetAddr)
+		uproxy.ProxyBidi(context.Background(), conn, remote, "socks5_client_tcp", targetAddr, config.DefaultTCPBufSize)
 
 	case 3: // UDP ASSOCIATE
 		slog.Debug("SOCKS5 UDP Associate request", "layer", "socks5", "client", clientAddr)

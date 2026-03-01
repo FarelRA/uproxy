@@ -5,27 +5,19 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"sync"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 )
 
-// TCPBufSize dictates the size of the zero-copy buffer used during ProxyBidi.
-var TCPBufSize = 32768
-
-// bufferPool acts as a global memory pool for the proxy byte copying.
-var bufferPool = sync.Pool{
-	New: func() interface{} {
-		buf := make([]byte, TCPBufSize)
-		return &buf
-	},
-}
+// DefaultTCPBufSize is the default buffer size for proxy operations.
+const DefaultTCPBufSize = 32768
 
 // ProxyBidi establishes a highly-optimized, zero-copy bidirectional data pipe
 // between two connections (e.g., an SSH channel and a raw TCP/UDP socket).
 // It blocks until both sides of the connection are completely closed, and records rich telemetry.
-func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string) error {
+// The bufSize parameter controls the buffer size for copying data.
+func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string, bufSize int) error {
 	defer a.Close()
 	defer b.Close()
 
@@ -38,10 +30,8 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 
 	// Stream: A -> B
 	g.Go(func() error {
-		bufPtr := bufferPool.Get().(*[]byte)
-		defer bufferPool.Put(bufPtr)
-
-		n, err := io.CopyBuffer(a, b, *bufPtr)
+		buf := make([]byte, bufSize)
+		n, err := io.CopyBuffer(a, b, buf)
 		txBytes = n
 
 		_ = a.Close()
@@ -50,10 +40,8 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 
 	// Stream: B -> A
 	g.Go(func() error {
-		bufPtr := bufferPool.Get().(*[]byte)
-		defer bufferPool.Put(bufPtr)
-
-		n, err := io.CopyBuffer(b, a, *bufPtr)
+		buf := make([]byte, bufSize)
+		n, err := io.CopyBuffer(b, a, buf)
 		rxBytes = n
 
 		_ = b.Close()
