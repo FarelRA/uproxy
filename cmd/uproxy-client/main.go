@@ -116,9 +116,6 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 		if !uproxy.IsRoot() {
 			return fmt.Errorf("TUN mode requires root privileges. Run with sudo or use --mode socks5")
 		}
-		if tunCfg.IP == "" {
-			return fmt.Errorf("--tun-ip is required for tun mode")
-		}
 	}
 	if mode != "socks5" && mode != "tun" {
 		return fmt.Errorf("invalid mode: %s (must be 'auto', 'socks5', or 'tun')", mode)
