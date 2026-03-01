@@ -35,7 +35,7 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 	// Update config with server-assigned IPs
 	cfg.IP = assignedIPv4
 	if assignedIPv6 != "" {
-		cfg.IPv6 = assignedIPv6 + "/64" // Standard /64 prefix for IPv6
+		cfg.IPv6 = assignedIPv6 // Server already sends with /64 prefix
 	}
 
 	slog.Info("Received server-assigned IPs", "ipv4", assignedIPv4, "ipv6", assignedIPv6)
