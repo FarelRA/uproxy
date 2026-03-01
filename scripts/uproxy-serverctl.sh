@@ -117,24 +117,16 @@ build_args() {
     fi
     
     # TUN mode parameters (requires root)
-    if [[ -n "${TUN_IP:-}" ]]; then
-        args+=(--tun-ip "$TUN_IP")
-    fi
-    
-    if [[ -n "${TUN_IPV6:-}" ]]; then
-        args+=(--tun-ipv6 "$TUN_IPV6")
-    fi
-    
-    if [[ -n "${TUN_NETMASK:-}" ]]; then
-        args+=(--tun-netmask "$TUN_NETMASK")
-    fi
-    
-    if [[ -n "${TUN_NAME:-}" ]]; then
-        args+=(--tun-name "$TUN_NAME")
-    fi
-    
-    if [[ -n "${TUN_MTU:-}" ]]; then
-        args+=(--tun-mtu "$TUN_MTU")
+    # If running as root, provide default TUN parameters
+    if [[ $EUID -eq 0 ]]; then
+        args+=(--tun-ip "${TUN_IP:-10.0.0.1}")
+        args+=(--tun-name "${TUN_NAME:-utun1}")
+        args+=(--tun-netmask "${TUN_NETMASK:-255.255.255.0}")
+        args+=(--tun-mtu "${TUN_MTU:-1280}")
+        
+        if [[ -n "${TUN_IPV6:-}" ]]; then
+            args+=(--tun-ipv6 "$TUN_IPV6")
+        fi
     fi
     
     # Extra flags
