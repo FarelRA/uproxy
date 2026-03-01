@@ -3,12 +3,12 @@ package socks5
 import (
 	"context"
 	"fmt"
-	"log/slog"
+	"io"
 	"net"
 	"time"
 
 	"golang.org/x/crypto/ssh"
-
+	"uproxy/internal/common"
 	"uproxy/internal/config"
 	"uproxy/internal/uproxy"
 )
@@ -19,7 +19,7 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 
 	targetAddr, err := ReadTargetHeader(channel)
 	if err != nil {
-		slog.Error("Failed to read TCP target header", "layer", "ssh_tcp", "error", err)
+		common.LogError("ssh_tcp", "Failed to read TCP target header", "error", err)
 		return
 	}
 
@@ -28,7 +28,7 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 		// Try to get IP from interface (supports both IPv4 and IPv6)
 		ip, err := uproxy.FirstIPOfInterface(outbound)
 		if err != nil {
-			slog.Error("Failed to get IP for iface", "layer", "ssh_tcp", "iface", outbound, "error", err)
+			common.LogError("ssh_tcp", "Failed to get IP for iface", "iface", outbound, "error", err)
 			return
 		}
 		dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
@@ -36,7 +36,7 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 
 	targetConn, err := dialer.DialContext(ctx, "tcp", targetAddr)
 	if err != nil {
-		slog.Error("Failed to dial TCP target", "layer", "ssh_tcp", "target", targetAddr, "error", err)
+		common.LogError("ssh_tcp", "Failed to dial TCP target", "target", targetAddr, "error", err)
 		return
 	}
 	defer targetConn.Close()

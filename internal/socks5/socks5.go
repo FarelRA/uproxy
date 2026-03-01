@@ -3,10 +3,12 @@ package socks5
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"strconv"
+
+	"uproxy/internal/common"
 	"uproxy/internal/config"
 	"uproxy/internal/uproxy"
 )
@@ -132,10 +134,10 @@ func parseSOCKS5Request(conn net.Conn) (cmd byte, targetAddr string, err error) 
 }
 
 func handleConnectCommand(conn net.Conn, targetAddr, clientAddr string, dialTCP func(string) (net.Conn, error)) {
-	slog.Debug("SOCKS5 TCP request", "layer", "socks5", "client", clientAddr, "target", targetAddr)
+	common.LogDebug("socks5", "SOCKS5 TCP request", "client", clientAddr, "target", targetAddr)
 	remote, err := dialTCP(targetAddr)
 	if err != nil {
-		slog.Error("TCP Connect failed", "layer", "socks5", "client", clientAddr, "target", targetAddr, "error", err)
+		common.LogError("socks5", "TCP Connect failed", "client", clientAddr, "target", targetAddr, "error", err)
 		conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
@@ -149,10 +151,10 @@ func handleConnectCommand(conn net.Conn, targetAddr, clientAddr string, dialTCP 
 }
 
 func handleUDPAssociate(conn net.Conn, clientAddr string, dialUDP func() (net.Addr, io.Closer, error)) {
-	slog.Debug("SOCKS5 UDP Associate request", "layer", "socks5", "client", clientAddr)
+	common.LogDebug("socks5", "SOCKS5 UDP Associate request", "client", clientAddr)
 	udpAddr, udpCloser, err := dialUDP()
 	if err != nil {
-		slog.Error("UDP Associate failed", "layer", "socks5", "client", clientAddr, "error", err)
+		common.LogError("socks5", "UDP Associate failed", "client", clientAddr, "error", err)
 		conn.Write([]byte{0x05, 0x05, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}

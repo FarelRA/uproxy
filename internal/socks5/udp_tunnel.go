@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -13,6 +12,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
+	"uproxy/internal/common"
 	"uproxy/internal/uproxy"
 )
 
@@ -102,7 +102,7 @@ func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) 
 		return nil, err
 	}
 
-	slog.Info("UDP Stream started", "layer", "socks5_udp", "role", "client", "target", targetStr)
+	common.LogInfo("socks5_udp", "UDP Stream started", "role", "client", "target", targetStr)
 
 	m.mu.Lock()
 	m.sessions[targetStr] = ch
@@ -121,7 +121,7 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 		m.mu.Lock()
 		delete(m.sessions, target)
 		m.mu.Unlock()
-		slog.Info("UDP Stream closed", "layer", "socks5_udp", "role", "client", "target", target, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
+		common.LogInfo("socks5_udp", "UDP Stream closed", "role", "client", "target", target, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
 	}()
 
 	for {
@@ -161,7 +161,7 @@ func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error
 
 	go func() {
 		defer conn.Close()
-		slog.Info("SOCKS5 UDP Associate local binding opened", "layer", "socks5", "addr", conn.LocalAddr().String())
+		common.LogInfo("socks5", "SOCKS5 UDP Associate local binding opened", "addr", conn.LocalAddr().String())
 
 		bufPtr := getUDPBuffer()
 		defer putUDPBuffer(bufPtr)
@@ -202,7 +202,7 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 
 	targetAddr, err := ReadTargetHeader(channel)
 	if err != nil {
-		slog.Error("Failed to read UDP target header", "error", err)
+		common.LogError("ssh_udp", "Failed to read UDP target header", "error", err)
 		return
 	}
 
@@ -217,7 +217,7 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 
 	conn, err := dialer.DialContext(ctx, "udp", targetAddr)
 	if err != nil {
-		slog.Error("Failed to dial UDP target", "target", targetAddr, "error", err)
+		common.LogError("ssh_udp", "Failed to dial UDP target", "target", targetAddr, "error", err)
 		return
 	}
 	defer conn.Close()
@@ -228,10 +228,9 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 
 	start := time.Now()
 	var txBytes, rxBytes int64
-	slog.Info("UDP Stream started", "layer", "socks5_udp", "role", "server", "target", targetAddr)
-
+	common.LogInfo("socks5_udp", "UDP Stream started", "role", "server", "target", targetAddr)
 	defer func() {
-		slog.Info("UDP Stream closed", "layer", "socks5_udp", "role", "server", "target", targetAddr, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
+		common.LogInfo("socks5_udp", "UDP Stream closed", "role", "server", "target", targetAddr, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
 	}()
 
 	// SSH -> Internet (TX)
