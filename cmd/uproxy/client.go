@@ -323,17 +323,24 @@ func startProxy(ctx context.Context, cfg *config.ClientConfig, connMgr *connecti
 
 // startSOCKS5Proxy starts the SOCKS5 proxy server
 func startSOCKS5Proxy(ctx context.Context, cfg *config.ClientConfig, connMgr *connectionManager) error {
+	startSOCKS5Server(ctx, cfg.ListenAddr, connMgr.getSSHClient, "socks5")
+	<-ctx.Done()
+	return nil
+}
+
+// startSOCKS5Server is a helper that starts a SOCKS5 server with the given configuration
+func startSOCKS5Server(ctx context.Context, listenAddr string, getClient func() *ssh.Client, layer string) {
 	go func() {
-		err := socks5.ServeSOCKS5(ctx, cfg.ListenAddr,
+		err := socks5.ServeSOCKS5(ctx, listenAddr,
 			func(addr string) (net.Conn, error) {
-				client := connMgr.getSSHClient()
+				client := getClient()
 				if client == nil {
 					return nil, fmt.Errorf("ssh client not connected")
 				}
 				return socks5.DialTCP(client, addr)
 			},
 			func() (net.Addr, io.Closer, error) {
-				client := connMgr.getSSHClient()
+				client := getClient()
 				if client == nil {
 					return nil, nil, fmt.Errorf("ssh client not connected")
 				}
@@ -341,13 +348,11 @@ func startSOCKS5Proxy(ctx context.Context, cfg *config.ClientConfig, connMgr *co
 			})
 
 		if err != nil {
-			slog.Error("SOCKS5 proxy server stopped", "error", err)
+			slog.Error("SOCKS5 proxy server stopped", "layer", layer, "error", err)
 		}
 	}()
 
-	slog.Info("SOCKS5 TCP/UDP proxy listening", "addr", cfg.ListenAddr)
-	<-ctx.Done()
-	return nil
+	slog.Info("SOCKS5 TCP/UDP proxy listening", "layer", layer, "addr", listenAddr)
 }
 
 // startTUNTunnel starts the TUN tunnel with fallback to SOCKS5
@@ -389,33 +394,7 @@ func runTUNLoop(ctx context.Context, connMgr *connectionManager, tunCfg *tun.Con
 }
 
 func startSOCKS5Fallback(ctx context.Context, listenAddr string, connMgr *connectionManager) {
-	if listenAddr == "" {
-		listenAddr = "127.0.0.1:1080"
-		slog.Info("Using default SOCKS5 listen address", "addr", listenAddr)
-	}
-
-	go func() {
-		err := socks5.ServeSOCKS5(ctx, listenAddr,
-			func(addr string) (net.Conn, error) {
-				client := connMgr.getSSHClient()
-				if client == nil {
-					return nil, fmt.Errorf("ssh client not connected")
-				}
-				return socks5.DialTCP(client, addr)
-			},
-			func() (net.Addr, io.Closer, error) {
-				client := connMgr.getSSHClient()
-				if client == nil {
-					return nil, nil, fmt.Errorf("ssh client not connected")
-				}
-				return socks5.DialUDP(client, "127.0.0.1")
-			})
-
-		if err != nil {
-			slog.Error("SOCKS5 proxy server stopped", "error", err)
-		}
-	}()
-	slog.Info("SOCKS5 TCP/UDP proxy listening (fallback mode)", "addr", listenAddr)
+	startSOCKS5Server(ctx, listenAddr, connMgr.getSSHClient, "fallback")
 }
 
 func monitorTUNFallback(ctx context.Context, fallbackCh <-chan struct{}, listenAddr string, connMgr *connectionManager) {
