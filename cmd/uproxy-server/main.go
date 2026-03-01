@@ -94,9 +94,25 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 
 	config := &ssh.ServerConfig{
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			slog.Info("Client attempting SSH authentication",
+				"remote_addr", conn.RemoteAddr(),
+				"user", conn.User(),
+				"key_type", key.Type(),
+				"fingerprint", ssh.FingerprintSHA256(key))
+
 			if err := uproxy.CheckAuthorizedKeys(key); err != nil {
+				slog.Warn("SSH authentication failed",
+					"remote_addr", conn.RemoteAddr(),
+					"key_type", key.Type(),
+					"fingerprint", ssh.FingerprintSHA256(key),
+					"error", err)
 				return nil, err
 			}
+
+			slog.Info("SSH authentication successful",
+				"remote_addr", conn.RemoteAddr(),
+				"key_type", key.Type(),
+				"fingerprint", ssh.FingerprintSHA256(key))
 			return &ssh.Permissions{}, nil
 		},
 	}

@@ -195,9 +195,18 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 				Timeout:         sshTimeout,
 			}
 
+			slog.Info("Attempting SSH authentication",
+				"server", serverAddr,
+				"user", "proxy",
+				"key_type", signer.PublicKey().Type(),
+				"fingerprint", ssh.FingerprintSHA256(signer.PublicKey()))
+
 			sshClientConn, sshChans, sshReqs, err := ssh.NewClientConn(uproxy.NewIdleTimeoutConn(kcpConn, idleTimeout), serverAddr, config)
 			if err != nil {
-				slog.Error("SSH handshake failed, retrying in 3s...", "error", err)
+				slog.Error("SSH handshake failed, retrying in 3s...",
+					"error", err,
+					"key_type", signer.PublicKey().Type(),
+					"fingerprint", ssh.FingerprintSHA256(signer.PublicKey()))
 				kcpConn.Close()
 				packetConn.Close()
 				time.Sleep(3 * time.Second)
