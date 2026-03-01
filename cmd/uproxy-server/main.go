@@ -32,6 +32,7 @@ func main() {
 	// TUN configuration for server side
 	var tunName, tunIP, tunNetmask, tunIPv6 string
 	var tunMTU int
+	var autoRoute *bool
 
 	var rootCmd = &cobra.Command{
 		Use:   "uproxy-server",
@@ -48,7 +49,7 @@ func main() {
 				MTU:     tunMTU,
 			}
 
-			return runServer(listenAddr, outbound, idleTimeout, proxyDialTimeout, reconnectInterval, udpSockBuf, &kcpCfg, tunCfg, sshDir, sshPrivateKey, sshAuthorizedKeys)
+			return runServer(listenAddr, outbound, idleTimeout, proxyDialTimeout, reconnectInterval, udpSockBuf, &kcpCfg, tunCfg, sshDir, sshPrivateKey, sshAuthorizedKeys, *autoRoute)
 		},
 	}
 
@@ -83,6 +84,7 @@ func main() {
 	rootCmd.Flags().StringVar(&tunNetmask, "tun-netmask", "255.255.255.0", "TUN interface netmask")
 	rootCmd.Flags().StringVar(&tunIPv6, "tun-ipv6", "fd42:cafe:beef::1/64", "TUN interface IPv6 address with prefix (e.g., fd42:cafe:beef::1/64)")
 	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1280, "TUN interface MTU")
+	autoRoute = rootCmd.Flags().Bool("auto-route", true, "Automatically configure NAT and IP forwarding (server) or routing (client)")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -91,7 +93,7 @@ func main() {
 }
 
 // runServer initializes the ResilientPacketConn, KCP listener, and SSH subsystem.
-func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, sshDir, sshPrivateKey, sshAuthorizedKeys string) error {
+func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, sshDir, sshPrivateKey, sshAuthorizedKeys string, autoRoute bool) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -136,12 +138,12 @@ func runServer(listenAddr, outbound string, idleTimeout, proxyDialTimeout, recon
 		slog.Info("TUN mode disabled (not running as root). Only SOCKS5 mode available.")
 		slog.Info("To enable TUN mode, run with: sudo uproxy-server ...")
 	} else if tunCfg != nil && tunCfg.IP != "" {
-		tunManager, err = tun.NewTUNManager(tunCfg, outbound)
+		tunManager, err = tun.NewTUNManager(tunCfg, outbound, autoRoute)
 		if err != nil {
 			slog.Warn("Failed to initialize TUN manager (TUN mode disabled)", "error", err)
 			tunManager = nil
 		} else {
-			slog.Info("TUN manager initialized (running as root)", "device", tunCfg.Name, "ipv4", tunCfg.IP, "ipv6", tunCfg.IPv6)
+			slog.Info("TUN manager initialized (running as root)", "device", tunCfg.Name, "ipv4", tunCfg.IP, "ipv6", tunCfg.IPv6, "auto_route", autoRoute)
 		}
 	} else {
 		slog.Info("TUN mode not configured. Only SOCKS5 mode available.")

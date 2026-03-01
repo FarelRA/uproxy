@@ -158,6 +158,9 @@ build_args() {
         args+=(--tun-mtu "${TUN_MTU:-1280}")
     fi
     
+    # Auto-route configuration (default: true)
+    args+=(--auto-route="${AUTO_ROUTE:-true}")
+    
     # Extra flags
     if [[ -n "${EXTRA_FLAGS:-}" ]]; then
         # shellcheck disable=SC2206

@@ -18,7 +18,7 @@ const (
 )
 
 // ServeTUN starts the TUN tunnel, reading packets from the TUN device and forwarding them through SSH
-func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes string) error {
+func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes string, autoRoute bool, serverAddr string) error {
 	// Open SSH channel first to receive server-assigned IPs
 	sshChan, err := openTUNChannel(sshClient)
 	if err != nil {

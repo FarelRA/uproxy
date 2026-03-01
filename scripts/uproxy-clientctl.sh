@@ -125,6 +125,9 @@ build_args() {
         args+=(--tun-routes "$TUN_ROUTES")
     fi
     
+    # Auto-route configuration (default: true)
+    args+=(--auto-route="${AUTO_ROUTE:-true}")
+    
     # SSH configuration
     if [[ -n "${SSH_DIR:-}" ]]; then
         args+=(--ssh-dir "$SSH_DIR")

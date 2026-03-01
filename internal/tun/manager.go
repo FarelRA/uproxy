@@ -13,9 +13,10 @@ import (
 // TUNManager manages a single TUN device shared by multiple clients.
 // It handles IP address allocation and packet routing to the correct client.
 type TUNManager struct {
-	device   *water.Interface
-	config   *Config
-	outbound string
+	device    *water.Interface
+	config    *Config
+	outbound  string
+	autoRoute bool // Whether to automatically set up NAT/forwarding
 
 	mu            sync.RWMutex
 	clients       map[string]*ClientRoute // Map: client IP → routing info
@@ -34,30 +35,35 @@ type ClientRoute struct {
 }
 
 // NewTUNManager creates a TUN manager with a shared TUN device.
-func NewTUNManager(cfg *Config, outbound string) (*TUNManager, error) {
+func NewTUNManager(cfg *Config, outbound string, autoRoute bool) (*TUNManager, error) {
 	// Create TUN device
 	device, err := CreateTUN(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create TUN device: %v", err)
 	}
 
-	// Enable IP forwarding
-	if err := EnableIPForwarding(); err != nil {
-		device.Close()
-		return nil, fmt.Errorf("failed to enable IP forwarding: %v", err)
-	}
+	// Conditionally enable IP forwarding and NAT
+	if autoRoute {
+		// Enable IP forwarding
+		if err := EnableIPForwarding(); err != nil {
+			device.Close()
+			return nil, fmt.Errorf("failed to enable IP forwarding: %v", err)
+		}
 
-	// Set up NAT/masquerading with subnet filtering
-	// Construct subnet strings for NAT rules
-	ipv4Subnet := ""
-	if cfg.IP != "" && cfg.Netmask != "" {
-		ipv4Subnet = cfg.IP + "/" + cfg.Netmask
-	}
-	ipv6Subnet := cfg.IPv6 // Already includes /64
+		// Set up NAT/masquerading with subnet filtering
+		// Construct subnet strings for NAT rules
+		ipv4Subnet := ""
+		if cfg.IP != "" && cfg.Netmask != "" {
+			ipv4Subnet = cfg.IP + "/" + cfg.Netmask
+		}
+		ipv6Subnet := cfg.IPv6 // Already includes /64
 
-	if err := EnableNAT(device.Name(), outbound, ipv4Subnet, ipv6Subnet); err != nil {
-		device.Close()
-		return nil, fmt.Errorf("failed to setup NAT: %v", err)
+		if err := EnableNAT(device.Name(), outbound, ipv4Subnet, ipv6Subnet); err != nil {
+			device.Close()
+			return nil, fmt.Errorf("failed to setup NAT: %v", err)
+		}
+	} else {
+		slog.Info("Auto-route disabled, skipping NAT/forwarding setup")
 	}
 
 	// Generate IP pools
@@ -71,6 +77,7 @@ func NewTUNManager(cfg *Config, outbound string) (*TUNManager, error) {
 		device:        device,
 		config:        cfg,
 		outbound:      outbound,
+		autoRoute:     autoRoute,
 		clients:       make(map[string]*ClientRoute),
 		ipv4Pool:      ipv4Pool,
 		ipv6Pool:      ipv6Pool,
@@ -338,7 +345,10 @@ func (m *TUNManager) Close() error {
 		}
 	}
 
-	DisableNAT(m.device.Name(), m.outbound, ipv4Subnet, ipv6Subnet)
+	// Conditionally cleanup NAT if auto-route was enabled
+	if m.autoRoute {
+		DisableNAT(m.device.Name(), m.outbound, ipv4Subnet, ipv6Subnet)
+	}
 
 	// Close TUN device
 	return m.device.Close()

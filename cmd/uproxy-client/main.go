@@ -36,6 +36,7 @@ func main() {
 	// TUN mode configuration
 	var tunName, tunRoutes string
 	var tunMTU int
+	var autoRoute bool
 
 	var rootCmd = &cobra.Command{
 		Use:   "uproxy-client",
@@ -50,7 +51,7 @@ func main() {
 				// IP, Netmask, and IPv6 will be assigned by the server
 			}
 
-			return runClient(mode, listenAddr, serverAddr, idleTimeout, sshTimeout, reconnectInterval, udpSockBuf, &kcpCfg, &tunCfg, tunRoutes, sshDir, sshPrivateKey, sshKnownHosts)
+			return runClient(mode, listenAddr, serverAddr, idleTimeout, sshTimeout, reconnectInterval, udpSockBuf, &kcpCfg, &tunCfg, tunRoutes, autoRoute, sshDir, sshPrivateKey, sshKnownHosts)
 		},
 	}
 
@@ -69,6 +70,7 @@ func main() {
 	rootCmd.Flags().StringVar(&tunName, "tun-name", "tun0", "TUN device name (tun mode only)")
 	rootCmd.Flags().IntVar(&tunMTU, "tun-mtu", 1400, "TUN interface MTU (tun mode only)")
 	rootCmd.Flags().StringVar(&tunRoutes, "tun-routes", "", "Comma-separated routes to add (e.g., 0.0.0.0/0,8.8.8.8/32,::/0). Note: IP addresses are assigned by the server")
+	rootCmd.Flags().BoolVar(&autoRoute, "auto-route", true, "Automatically set up routing to send all traffic through TUN (tun mode only)")
 
 	rootCmd.Flags().DurationVar(&idleTimeout, "idle-timeout", 1*time.Hour, "Idle timeout before giving up on network")
 	rootCmd.Flags().DurationVar(&sshTimeout, "ssh-timeout", 10*time.Second, "Timeout for the initial SSH handshake")
@@ -94,7 +96,7 @@ func main() {
 }
 
 // runClient initializes the background connection loop and the foreground proxy (SOCKS5 or TUN).
-func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, tunRoutes, sshDir, sshPrivateKey, sshKnownHosts string) error {
+func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, reconnectInterval time.Duration, udpSockBuf int, kcpCfg *kcp.Config, tunCfg *tun.Config, tunRoutes string, autoRoute bool, sshDir, sshPrivateKey, sshKnownHosts string) error {
 	// Auto-detect mode based on privileges
 	if mode == "auto" {
 		if uproxy.IsRoot() {
@@ -279,7 +281,7 @@ func runClient(mode, listenAddr, serverAddr string, idleTimeout, sshTimeout, rec
 					continue
 				}
 
-				err := tun.ServeTUN(ctx, client, tunCfg, tunRoutes)
+				err := tun.ServeTUN(ctx, client, tunCfg, tunRoutes, autoRoute, serverAddr)
 				if err != nil {
 					// Check if server doesn't support TUN mode
 					if strings.Contains(err.Error(), "channel type") && strings.Contains(err.Error(), "not supported") {
