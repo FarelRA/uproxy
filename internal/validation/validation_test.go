@@ -2,6 +2,8 @@ package validation
 
 import (
 	"testing"
+
+	"uproxy/internal/config"
 )
 
 func BenchmarkValidateIPv4Packet(b *testing.B) {
