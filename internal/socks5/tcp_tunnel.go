@@ -22,15 +22,10 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 		return
 	}
 
-	dialer := &net.Dialer{Timeout: dialTimeout}
-	if outbound != "" {
-		// Try to get IP from interface (supports both IPv4 and IPv6)
-		ip, err := uproxy.FirstIPOfInterface(outbound)
-		if err != nil {
-			common.LogError("ssh_tcp", "Failed to get IP for iface", "iface", outbound, "error", err)
-			return
-		}
-		dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
+	dialer, err := createDialer("tcp", outbound, dialTimeout)
+	if err != nil {
+		common.LogError("ssh_tcp", "Failed to create dialer", "iface", outbound, "error", err)
+		return
 	}
 
 	targetConn, err := dialer.DialContext(ctx, "tcp", targetAddr)

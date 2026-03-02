@@ -205,17 +205,25 @@ func DialUDP(ctx context.Context, sshClient *ssh.Client, listenIP string) (net.A
 	return conn.LocalAddr(), &udpCloser{conn: conn, sessionMgr: sessionMgr}, nil
 }
 
-// createUDPDialer creates a net.Dialer configured for UDP with optional interface binding.
-func createUDPDialer(outbound string, dialTimeout time.Duration) *net.Dialer {
+// createDialer creates a net.Dialer configured for the specified network type with optional interface binding.
+// Supports both "tcp" and "udp" network types.
+func createDialer(network, outbound string, dialTimeout time.Duration) (*net.Dialer, error) {
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	if outbound != "" {
 		// Try to get IP from interface (supports both IPv4 and IPv6)
 		ip, err := uproxy.FirstIPOfInterface(outbound)
-		if err == nil {
+		if err != nil {
+			return nil, err
+		}
+
+		switch network {
+		case "tcp":
+			dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
+		case "udp":
 			dialer.LocalAddr = &net.UDPAddr{IP: ip, Port: 0}
 		}
 	}
-	return dialer
+	return dialer, nil
 }
 
 // proxyUDPBidirectional handles bidirectional UDP forwarding between SSH channel and UDP connection.
@@ -267,7 +275,12 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 		return
 	}
 
-	dialer := createUDPDialer(outbound, dialTimeout)
+	dialer, err := createDialer("udp", outbound, dialTimeout)
+	if err != nil {
+		common.LogError("ssh_udp", "Failed to create dialer", "iface", outbound, "error", err)
+		return
+	}
+
 	conn, err := dialer.DialContext(ctx, "udp", targetAddr)
 	if err != nil {
 		common.LogError("ssh_udp", "Failed to dial UDP target", "target", targetAddr, "error", err)
