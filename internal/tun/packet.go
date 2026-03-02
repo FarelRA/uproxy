@@ -2,8 +2,8 @@ package tun
 
 import "uproxy/internal/validation"
 
-// IPVersion returns the IP version (4 or 6) from a packet
-func IPVersion(packet []byte) int {
+// ipVersion returns the IP version (4 or 6) from a packet
+func ipVersion(packet []byte) int {
 	if len(packet) < 1 {
 		return 0
 	}
