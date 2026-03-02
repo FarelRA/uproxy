@@ -88,6 +88,15 @@ func (a *IPAllocator) ReleaseIP(ipv4, ipv6 string) {
 	}
 }
 
+// generateRandomOctet generates a random byte in range 2-254
+func generateRandomOctet() (byte, error) {
+	n, err := rand.Int(rand.Reader, big.NewInt(253))
+	if err != nil {
+		return 0, err
+	}
+	return byte(n.Int64() + 2), nil
+}
+
 // generateRandomIPv4 generates a random IPv4 address within the configured network
 func (a *IPAllocator) generateRandomIPv4() (string, error) {
 	if a.ipv4Network == nil {
@@ -98,11 +107,10 @@ func (a *IPAllocator) generateRandomIPv4() (string, error) {
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		// Generate random last octet (2-254, skip .0, .1, .255)
-		n, err := rand.Int(rand.Reader, big.NewInt(253))
+		lastOctet, err := generateRandomOctet()
 		if err != nil {
 			continue
 		}
-		lastOctet := byte(n.Int64() + 2) // Range: 2-254
 
 		// Construct IP
 		ip := make(net.IP, 4)
@@ -135,11 +143,10 @@ func (a *IPAllocator) generateRandomIPv6() (string, error) {
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		// Generate random last octet (2-254)
-		n, err := rand.Int(rand.Reader, big.NewInt(253))
+		lastOctet, err := generateRandomOctet()
 		if err != nil {
 			continue
 		}
-		lastOctet := byte(n.Int64() + 2)
 
 		// Construct IP
 		ip := make(net.IP, 16)
