@@ -76,8 +76,14 @@ func (m *ConnectivityMonitor) checkConnectivity() {
 	timeSinceRx := now.Sub(lastRx)
 	timeSinceTx := now.Sub(lastTx)
 
+	slog.Debug("Checking connectivity",
+		"time_since_rx", timeSinceRx.Round(time.Millisecond),
+		"time_since_tx", timeSinceTx.Round(time.Millisecond))
+
 	// Check for connectivity issues
 	if m.isCompletelyIdle(timeSinceRx, timeSinceTx) {
+		slog.Debug("Connection idle (normal state)",
+			"idle_timeout", m.idleTimeout)
 		return // Normal idle state
 	}
 
