@@ -203,11 +203,11 @@ func TestHandleConnectCommand(t *testing.T) {
 		remoteConn := testutil.NewMockConn()
 		remoteConn.ReadBuf.Write([]byte("response"))
 
-		dialTCP := func(addr string) (net.Conn, error) {
+		dialTCP := func(ctx context.Context, addr string) (net.Conn, error) {
 			return remoteConn, nil
 		}
 
-		handleConnectCommand(conn, "example.com:80", "127.0.0.1:12345", dialTCP)
+		handleConnectCommand(context.Background(), conn, "example.com:80", "127.0.0.1:12345", dialTCP)
 
 		// Check success response
 		resp := conn.WriteBuf.Bytes()
@@ -219,11 +219,11 @@ func TestHandleConnectCommand(t *testing.T) {
 	t.Run("failed connect", func(t *testing.T) {
 		conn := testutil.NewMockConn()
 
-		dialTCP := func(addr string) (net.Conn, error) {
+		dialTCP := func(ctx context.Context, addr string) (net.Conn, error) {
 			return nil, errors.New("connection refused")
 		}
 
-		handleConnectCommand(conn, "example.com:80", "127.0.0.1:12345", dialTCP)
+		handleConnectCommand(context.Background(), conn, "example.com:80", "127.0.0.1:12345", dialTCP)
 
 		// Check error response
 		resp := conn.WriteBuf.Bytes()
@@ -241,11 +241,11 @@ func TestHandleUDPAssociate(t *testing.T) {
 		udpAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5000}
 		closer := testutil.NewMockCloser()
 
-		dialUDP := func() (net.Addr, io.Closer, error) {
+		dialUDP := func(ctx context.Context) (net.Addr, io.Closer, error) {
 			return udpAddr, closer, nil
 		}
 
-		go handleUDPAssociate(conn, "127.0.0.1:12345", dialUDP)
+		go handleUDPAssociate(context.Background(), conn, "127.0.0.1:12345", dialUDP)
 		time.Sleep(10 * time.Millisecond)
 
 		// Check response
@@ -263,11 +263,11 @@ func TestHandleUDPAssociate(t *testing.T) {
 		udpAddr := &net.UDPAddr{IP: net.ParseIP("::1"), Port: 5000}
 		closer := testutil.NewMockCloser()
 
-		dialUDP := func() (net.Addr, io.Closer, error) {
+		dialUDP := func(ctx context.Context) (net.Addr, io.Closer, error) {
 			return udpAddr, closer, nil
 		}
 
-		go handleUDPAssociate(conn, "127.0.0.1:12345", dialUDP)
+		go handleUDPAssociate(context.Background(), conn, "127.0.0.1:12345", dialUDP)
 		time.Sleep(10 * time.Millisecond)
 
 		// Check response
@@ -282,11 +282,11 @@ func TestHandleUDPAssociate(t *testing.T) {
 	t.Run("failed UDP associate", func(t *testing.T) {
 		conn := testutil.NewMockConn()
 
-		dialUDP := func() (net.Addr, io.Closer, error) {
+		dialUDP := func(ctx context.Context) (net.Addr, io.Closer, error) {
 			return nil, nil, errors.New("bind failed")
 		}
 
-		handleUDPAssociate(conn, "127.0.0.1:12345", dialUDP)
+		handleUDPAssociate(context.Background(), conn, "127.0.0.1:12345", dialUDP)
 
 		// Check error response
 		resp := conn.WriteBuf.Bytes()
@@ -299,14 +299,14 @@ func TestHandleUDPAssociate(t *testing.T) {
 // TestBufferPool tests UDP buffer pool
 func TestBufferPool(t *testing.T) {
 	buf1 := getUDPBuffer()
-	if buf1 == nil || len(*buf1) != UDPBufSize {
+	if buf1 == nil || len(*buf1) != udpBufSize {
 		t.Errorf("getUDPBuffer() returned invalid buffer")
 	}
 
 	putUDPBuffer(buf1)
 
 	buf2 := getUDPBuffer()
-	if buf2 == nil || len(*buf2) != UDPBufSize {
+	if buf2 == nil || len(*buf2) != udpBufSize {
 		t.Errorf("getUDPBuffer() after put returned invalid buffer")
 	}
 
@@ -512,15 +512,15 @@ func TestHandleSOCKS5Client(t *testing.T) {
 		conn := testutil.NewMockConn()
 		conn.ReadBuf = bytes.NewBuffer(data)
 
-		dialTCP := func(addr string) (net.Conn, error) {
+		dialTCP := func(ctx context.Context, addr string) (net.Conn, error) {
 			return nil, errors.New("should not be called")
 		}
 
-		dialUDP := func() (net.Addr, io.Closer, error) {
+		dialUDP := func(ctx context.Context) (net.Addr, io.Closer, error) {
 			return nil, nil, errors.New("should not be called")
 		}
 
-		handleSOCKS5Client(conn, dialTCP, dialUDP)
+		handleSOCKS5Client(context.Background(), conn, dialTCP, dialUDP)
 
 		// Check that unsupported command response was sent
 		resp := conn.WriteBuf.Bytes()
@@ -539,11 +539,11 @@ func TestHandleSOCKS5Client(t *testing.T) {
 func TestServeSOCKS5_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	dialTCP := func(addr string) (net.Conn, error) {
+	dialTCP := func(ctx context.Context, addr string) (net.Conn, error) {
 		return nil, errors.New("should not be called")
 	}
 
-	dialUDP := func() (net.Addr, io.Closer, error) {
+	dialUDP := func(ctx context.Context) (net.Addr, io.Closer, error) {
 		return nil, nil, errors.New("should not be called")
 	}
 
@@ -573,12 +573,12 @@ func TestServeSOCKS5_ContextCancellation(t *testing.T) {
 func TestSOCKS5_ConcurrentRequests(t *testing.T) {
 	const numRequests = 10
 
-	dialTCP := func(addr string) (net.Conn, error) {
+	dialTCP := func(ctx context.Context, addr string) (net.Conn, error) {
 		// Return a mock connection
 		return testutil.NewMockConn(), nil
 	}
 
-	dialUDP := func() (net.Addr, io.Closer, error) {
+	dialUDP := func(ctx context.Context) (net.Addr, io.Closer, error) {
 		return nil, nil, errors.New("UDP not supported in this test")
 	}
 
@@ -602,7 +602,7 @@ func TestSOCKS5_ConcurrentRequests(t *testing.T) {
 			conn := testutil.NewMockConn()
 			conn.ReadBuf = bytes.NewBuffer(data)
 
-			handleSOCKS5Client(conn, dialTCP, dialUDP)
+			handleSOCKS5Client(context.Background(), conn, dialTCP, dialUDP)
 		}()
 	}
 

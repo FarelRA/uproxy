@@ -47,7 +47,7 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 }
 
 // DialTCP runs on the client side to establish a new TCP SSH channel to the server.
-func DialTCP(sshClient *ssh.Client, targetAddr string) (net.Conn, error) {
+func DialTCP(ctx context.Context, sshClient *ssh.Client, targetAddr string) (net.Conn, error) {
 	channel, reqs, err := sshClient.OpenChannel(ChannelTypeTCP, nil)
 	if err != nil {
 		return nil, fmt.Errorf("open channel failed: %v", err)

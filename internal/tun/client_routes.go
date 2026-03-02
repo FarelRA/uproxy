@@ -83,11 +83,26 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 		"original_src", srcIP,
 		"tun_device", tunDevice)
 
+	// Add server exception routes
+	if err := addServerExceptionRoutes(info); err != nil {
+		return nil, err
+	}
+
+	// Add default routes through TUN
+	if err := addDefaultTUNRoutes(tunDevice, ipv6gw); err != nil {
+		return nil, err
+	}
+
+	return info, nil
+}
+
+// addServerExceptionRoutes adds routes for server IPs through original gateway
+func addServerExceptionRoutes(info *RouteInfo) error {
 	// Add route for VPN server IPv4 through original gateway (so VPN traffic doesn't loop)
-	if serverIPv4 != "" && gw != "" {
-		args := []string{"route", "replace", serverIPv4, "via", gw, "dev", iface}
-		if srcIP != "" {
-			args = append(args, "src", srcIP)
+	if info.ServerIPv4 != "" && info.OriginalGW != "" {
+		args := []string{"route", "replace", info.ServerIPv4, "via", info.OriginalGW, "dev", info.OriginalIface}
+		if info.OriginalSrcIP != "" {
+			args = append(args, "src", info.OriginalSrcIP)
 		}
 		args = append(args, "metric", "600")
 
@@ -95,19 +110,19 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 		if output, err := cmd.CombinedOutput(); err != nil {
 			// Route might already exist, check if it's a duplicate error
 			if !strings.Contains(string(output), "File exists") {
-				return nil, fmt.Errorf("failed to add server IPv4 route: %w, output: %s", err, output)
+				return fmt.Errorf("failed to add server IPv4 route: %w, output: %s", err, output)
 			}
-			slog.Warn("Server IPv4 route already exists", "server_ip", serverIPv4)
+			slog.Warn("Server IPv4 route already exists", "server_ip", info.ServerIPv4)
 		} else {
-			slog.Info("Added server IPv4 exception route", "server_ip", serverIPv4, "via", gw, "dev", iface, "src", srcIP)
+			slog.Info("Added server IPv4 exception route", "server_ip", info.ServerIPv4, "via", info.OriginalGW, "dev", info.OriginalIface, "src", info.OriginalSrcIP)
 		}
 	}
 
 	// Add route for VPN server IPv6 through original gateway (if IPv6 is available)
-	if serverIPv6 != "" && ipv6gw != "" {
-		args := []string{"-6", "route", "replace", serverIPv6, "via", ipv6gw, "dev", ipv6iface}
-		if ipv6src != "" {
-			args = append(args, "src", ipv6src)
+	if info.ServerIPv6 != "" && info.OriginalIPv6GW != "" {
+		args := []string{"-6", "route", "replace", info.ServerIPv6, "via", info.OriginalIPv6GW, "dev", info.OriginalIPv6Iface}
+		if info.OriginalIPv6SrcIP != "" {
+			args = append(args, "src", info.OriginalIPv6SrcIP)
 		}
 		args = append(args, "metric", "600")
 
@@ -116,17 +131,22 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 			if !strings.Contains(string(output), "File exists") {
 				slog.Warn("Failed to add server IPv6 route", "error", err, "output", string(output))
 			} else {
-				slog.Warn("Server IPv6 route already exists", "server_ip", serverIPv6)
+				slog.Warn("Server IPv6 route already exists", "server_ip", info.ServerIPv6)
 			}
 		} else {
-			slog.Info("Added server IPv6 exception route", "server_ip", serverIPv6, "via", ipv6gw, "dev", ipv6iface, "src", ipv6src)
+			slog.Info("Added server IPv6 exception route", "server_ip", info.ServerIPv6, "via", info.OriginalIPv6GW, "dev", info.OriginalIPv6Iface, "src", info.OriginalIPv6SrcIP)
 		}
 	}
 
+	return nil
+}
+
+// addDefaultTUNRoutes adds default routes through TUN device
+func addDefaultTUNRoutes(tunDevice, ipv6gw string) error {
 	// Add default route through TUN (IPv4) - no metric for highest priority
 	cmd := exec.Command("ip", "route", "replace", "default", "dev", tunDevice)
 	if output, err := cmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("failed to add default IPv4 route: %w, output: %s", err, output)
+		return fmt.Errorf("failed to add default IPv4 route: %w, output: %s", err, output)
 	}
 	slog.Info("Added default IPv4 route", "dev", tunDevice)
 
@@ -142,7 +162,7 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 		}
 	}
 
-	return info, nil
+	return nil
 }
 
 // CleanupClientRoutes removes the routes added by SetupClientRoutes

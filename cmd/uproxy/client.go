@@ -79,7 +79,11 @@ func runClient(ctx context.Context, cfg *config.ClientConfig) error {
 
 	// Create connection manager
 	connMgr := newConnectionManager(cfg, signer)
-	defer connMgr.cleanup()
+	defer func() {
+		if err := connMgr.cleanup(); err != nil {
+			slog.Error("Failed to cleanup connection manager", "error", err)
+		}
+	}()
 
 	// Start connection loop in background
 	go connMgr.connectLoop(ctx)
@@ -170,7 +174,31 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 
 	slog.Info("Dialing server", "addr", cm.cfg.ServerAddr)
 
-	// Create resilient packet connection
+	// Create and setup packet connection
+	packetConn, err := cm.createPacketConn()
+	if err != nil {
+		return err
+	}
+
+	// Setup KCP connection
+	kcpConn, err := cm.setupKCP(packetConn)
+	if err != nil {
+		packetConn.Close()
+		return err
+	}
+
+	// Establish SSH connection
+	if err := cm.establishSSH(kcpConn); err != nil {
+		kcpConn.Close()
+		packetConn.Close()
+		return err
+	}
+
+	return nil
+}
+
+// createPacketConn creates and configures the resilient packet connection
+func (cm *connectionManager) createPacketConn() (*uproxy.ResilientPacketConn, error) {
 	packetConn := uproxy.NewResilientPacketConn(
 		"",
 		"",
@@ -184,11 +212,14 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 	cm.diagnostics = network.NewDiagnostics(cm.cfg.ServerAddr, slog.Default())
 	packetConn.SetFailureHandler(cm.cfg.ServerAddr, cm.handleConnectivityFailure)
 
-	// Create KCP connection
+	return packetConn, nil
+}
+
+// setupKCP creates and configures the KCP connection
+func (cm *connectionManager) setupKCP(packetConn *uproxy.ResilientPacketConn) (*kcp.UDPSession, error) {
 	kcpConn, err := kcp.NewConn(cm.cfg.ServerAddr, packetConn)
 	if err != nil {
-		packetConn.Close()
-		return fmt.Errorf("KCP dial failed: %w", err)
+		return nil, fmt.Errorf("KCP dial failed: %w", err)
 	}
 	cm.kcpConn = kcpConn
 
@@ -197,7 +228,11 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 	cm.cfg.KCP.ToKCPConfig().Apply(kcpConn)
 	kcpConn.SetDeadLink(config.DefaultKCPDeadLink) // Disabled - connectivity monitor handles timeouts
 
-	// Create SSH client config
+	return kcpConn, nil
+}
+
+// establishSSH creates SSH client config and establishes SSH connection
+func (cm *connectionManager) establishSSH(kcpConn *kcp.UDPSession) error {
 	sshConfig := &ssh.ClientConfig{
 		User: "proxy",
 		Auth: []ssh.AuthMethod{
@@ -215,11 +250,8 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 		"key_type", cm.signer.PublicKey().Type(),
 		"fingerprint", ssh.FingerprintSHA256(cm.signer.PublicKey()))
 
-	// Establish SSH connection
 	sshClientConn, sshChans, sshReqs, err := ssh.NewClientConn(kcpConn, cm.cfg.ServerAddr, sshConfig)
 	if err != nil {
-		kcpConn.Close()
-		packetConn.Close()
 		return fmt.Errorf("SSH handshake failed: %w", err)
 	}
 
@@ -332,19 +364,19 @@ func startSOCKS5Proxy(ctx context.Context, cfg *config.ClientConfig, connMgr *co
 func startSOCKS5Server(ctx context.Context, listenAddr string, getClient func() *ssh.Client, layer string) {
 	go func() {
 		err := socks5.ServeSOCKS5(ctx, listenAddr,
-			func(addr string) (net.Conn, error) {
+			func(ctx context.Context, addr string) (net.Conn, error) {
 				client := getClient()
 				if client == nil {
 					return nil, fmt.Errorf("ssh client not connected")
 				}
-				return socks5.DialTCP(client, addr)
+				return socks5.DialTCP(ctx, client, addr)
 			},
-			func() (net.Addr, io.Closer, error) {
+			func(ctx context.Context) (net.Addr, io.Closer, error) {
 				client := getClient()
 				if client == nil {
 					return nil, nil, fmt.Errorf("ssh client not connected")
 				}
-				return socks5.DialUDP(client, "127.0.0.1")
+				return socks5.DialUDP(ctx, client, "127.0.0.1")
 			})
 
 		if err != nil {

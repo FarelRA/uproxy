@@ -126,7 +126,9 @@ func (r *ResilientPacketConn) reconnectSync() {
 		return
 	}
 	if r.conn != nil {
-		_ = r.conn.Close()
+		if err := r.conn.Close(); err != nil {
+			slog.Debug("Failed to close connection during reconnect", "error", err)
+		}
 		r.conn = nil
 	}
 	r.mu.Unlock()

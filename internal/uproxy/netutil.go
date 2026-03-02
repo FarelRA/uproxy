@@ -2,6 +2,7 @@ package uproxy
 
 import (
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
 	"runtime"
@@ -165,7 +166,11 @@ func BindAddrForInterface(addr, ifaceName string) (string, error) {
 // without kernel-level packet drops.
 func OptimizeUDPConn(conn *net.UDPConn, bufSize int) {
 	if bufSize > 0 {
-		_ = conn.SetReadBuffer(bufSize)
-		_ = conn.SetWriteBuffer(bufSize)
+		if err := conn.SetReadBuffer(bufSize); err != nil {
+			slog.Debug("Failed to set UDP read buffer size", "size", bufSize, "error", err)
+		}
+		if err := conn.SetWriteBuffer(bufSize); err != nil {
+			slog.Debug("Failed to set UDP write buffer size", "size", bufSize, "error", err)
+		}
 	}
 }

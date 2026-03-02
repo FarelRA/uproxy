@@ -173,7 +173,8 @@ func promptAndAddKnownHost(normalizedHost string, pubKey ssh.PublicKey, knownHos
 	if err != nil {
 		slog.Warn("Failed to open /dev/tty for interactive prompt, falling back to os.Stdin")
 		tty = os.Stdin
-	} else {
+	}
+	if tty != os.Stdin {
 		defer tty.Close()
 	}
 

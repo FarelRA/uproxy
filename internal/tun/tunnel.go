@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/songgao/water"
 	"golang.org/x/crypto/ssh"
 	"uproxy/internal/framing"
 )
@@ -20,17 +21,36 @@ const (
 
 // ServeTUN starts the TUN tunnel, reading packets from the TUN device and forwarding them through SSH
 func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes string, autoRoute bool, serverAddr string) error {
+	// Setup TUN device and routing
+	sshChan, iface, routeMonitor, err := setupTUNDevice(sshClient, cfg, routes, autoRoute, serverAddr)
+	if err != nil {
+		return err
+	}
+	defer sshChan.Close()
+	defer iface.Close()
+	if routeMonitor != nil {
+		defer routeMonitor.Stop()
+	}
+
+	slog.Info("TUN tunnel started", "device", iface.Name(), "ip", cfg.IP)
+
+	// Start bidirectional forwarding
+	return runTUNForwarding(ctx, sshChan, iface)
+}
+
+// setupTUNDevice creates and configures the TUN device with server-assigned IPs and routing
+func setupTUNDevice(sshClient *ssh.Client, cfg *Config, routes string, autoRoute bool, serverAddr string) (ssh.Channel, *water.Interface, *RouteMonitor, error) {
 	// Open SSH channel first to receive server-assigned IPs
 	sshChan, err := openTUNChannel(sshClient)
 	if err != nil {
-		return fmt.Errorf("failed to open SSH channel: %w", err)
+		return nil, nil, nil, fmt.Errorf("failed to open SSH channel: %w", err)
 	}
-	defer sshChan.Close()
 
 	// Read server-assigned IPs
 	assignedIPv4, assignedIPv6, err := readServerAssignedIPs(sshChan)
 	if err != nil {
-		return fmt.Errorf("failed to read server-assigned IPs: %w", err)
+		sshChan.Close()
+		return nil, nil, nil, fmt.Errorf("failed to read server-assigned IPs: %w", err)
 	}
 
 	// Update config with server-assigned IPs
@@ -44,31 +64,44 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 	// Create and configure TUN device with server-assigned IPs
 	iface, err := CreateTUN(cfg)
 	if err != nil {
-		return fmt.Errorf("failed to create TUN device: %w", err)
+		sshChan.Close()
+		return nil, nil, nil, fmt.Errorf("failed to create TUN device: %w", err)
 	}
-	defer iface.Close()
 
-	// Set up automatic routing with monitoring if enabled
+	// Set up routing
+	routeMonitor, err := setupTUNRouting(iface.Name(), routes, autoRoute, serverAddr)
+	if err != nil {
+		iface.Close()
+		sshChan.Close()
+		return nil, nil, nil, err
+	}
+
+	return sshChan, iface, routeMonitor, nil
+}
+
+// setupTUNRouting configures automatic routing and custom routes
+func setupTUNRouting(ifaceName, routes string, autoRoute bool, serverAddr string) (*RouteMonitor, error) {
 	var routeMonitor *RouteMonitor
 	if autoRoute {
-		routeMonitor = NewRouteMonitor(serverAddr, iface.Name())
+		routeMonitor = NewRouteMonitor(serverAddr, ifaceName)
 		if err := routeMonitor.Start(); err != nil {
-			return fmt.Errorf("failed to set up client routes: %w", err)
+			return nil, fmt.Errorf("failed to set up client routes: %w", err)
 		}
-		defer routeMonitor.Stop()
 	}
 
 	// Add routes if specified
 	routeList := ParseRoutes(routes)
 	for _, route := range routeList {
-		if err := AddRoute(route, iface.Name()); err != nil {
+		if err := AddRoute(route, ifaceName); err != nil {
 			slog.Warn("Failed to add route", "route", route, "error", err)
 		}
 	}
 
-	slog.Info("TUN tunnel started", "device", iface.Name(), "ip", cfg.IP)
+	return routeMonitor, nil
+}
 
-	// Statistics
+// runTUNForwarding runs bidirectional packet forwarding between TUN device and SSH channel
+func runTUNForwarding(ctx context.Context, sshChan ssh.Channel, iface *water.Interface) error {
 	var txPackets, rxPackets, txBytes, rxBytes atomic.Int64
 
 	var wg sync.WaitGroup
@@ -78,93 +111,109 @@ func ServeTUN(ctx context.Context, sshClient *ssh.Client, cfg *Config, routes st
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		buf := make([]byte, MaxPacketSize)
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			n, err := iface.Read(buf)
-			if err != nil {
-				errChan <- fmt.Errorf("TUN read error: %w", err)
-				return
-			}
-
-			if n == 0 {
-				continue
-			}
-
-			packet := buf[:n]
-
-			// Basic validation
-			if !ValidatePacket(packet) {
-				slog.Debug("Invalid packet dropped", "size", n)
-				continue
-			}
-
-			// Write framed packet to SSH channel
-			if err := framing.WriteFramed(sshChan, packet); err != nil {
-				errChan <- fmt.Errorf("SSH write error: %w", err)
-				return
-			}
-
-			txPackets.Add(1)
-			txBytes.Add(int64(n))
-		}
+		forwardTUNToSSH(ctx, iface, sshChan, &txPackets, &txBytes, errChan)
 	}()
 
 	// SSH -> TUN (RX)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-
-			// Read framed packet from SSH channel
-			packet, err := framing.ReadFramed(sshChan)
-			if err != nil {
-				if err != io.EOF {
-					errChan <- fmt.Errorf("SSH read error: %w", err)
-				}
-				return
-			}
-
-			// Basic validation
-			if !ValidatePacket(packet) {
-				slog.Debug("Invalid packet dropped", "size", len(packet))
-				continue
-			}
-
-			// Write packet to TUN device - kernel handles the rest
-			if _, err := iface.Write(packet); err != nil {
-				errChan <- fmt.Errorf("TUN write error: %w", err)
-				return
-			}
-
-			rxPackets.Add(1)
-			rxBytes.Add(int64(len(packet)))
-		}
+		forwardSSHToTUN(ctx, sshChan, iface, &rxPackets, &rxBytes, errChan)
 	}()
 
 	// Wait for error or context cancellation
 	select {
 	case err := <-errChan:
-		slog.Info("TUN tunnel stats", "tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
-			"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load())
+		logTUNStats(&txPackets, &rxPackets, &txBytes, &rxBytes)
 		return err
 	case <-ctx.Done():
-		slog.Info("TUN tunnel stats", "tx_packets", txPackets.Load(), "rx_packets", rxPackets.Load(),
-			"tx_bytes", txBytes.Load(), "rx_bytes", rxBytes.Load())
+		logTUNStats(&txPackets, &rxPackets, &txBytes, &rxBytes)
 		return ctx.Err()
 	}
+}
+
+// forwardTUNToSSH forwards packets from TUN device to SSH channel
+func forwardTUNToSSH(ctx context.Context, iface *water.Interface, sshChan ssh.Channel, txPackets, txBytes *atomic.Int64, errChan chan<- error) {
+	buf := make([]byte, MaxPacketSize)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		n, err := iface.Read(buf)
+		if err != nil {
+			errChan <- fmt.Errorf("TUN read error: %w", err)
+			return
+		}
+
+		if n == 0 {
+			continue
+		}
+
+		packet := buf[:n]
+
+		// Basic validation
+		if !ValidatePacket(packet) {
+			slog.Debug("Invalid packet dropped", "size", n)
+			continue
+		}
+
+		// Write framed packet to SSH channel
+		if err := framing.WriteFramed(sshChan, packet); err != nil {
+			errChan <- fmt.Errorf("SSH write error: %w", err)
+			return
+		}
+
+		txPackets.Add(1)
+		txBytes.Add(int64(n))
+	}
+}
+
+// forwardSSHToTUN forwards packets from SSH channel to TUN device
+func forwardSSHToTUN(ctx context.Context, sshChan ssh.Channel, iface *water.Interface, rxPackets, rxBytes *atomic.Int64, errChan chan<- error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		// Read framed packet from SSH channel
+		packet, err := framing.ReadFramed(sshChan)
+		if err != nil {
+			if err != io.EOF {
+				errChan <- fmt.Errorf("SSH read error: %w", err)
+			}
+			return
+		}
+
+		// Basic validation
+		if !ValidatePacket(packet) {
+			slog.Debug("Invalid packet dropped", "size", len(packet))
+			continue
+		}
+
+		// Write packet to TUN device - kernel handles the rest
+		if _, err := iface.Write(packet); err != nil {
+			errChan <- fmt.Errorf("TUN write error: %w", err)
+			return
+		}
+
+		rxPackets.Add(1)
+		rxBytes.Add(int64(len(packet)))
+	}
+}
+
+// logTUNStats logs TUN tunnel statistics
+func logTUNStats(txPackets, rxPackets, txBytes, rxBytes *atomic.Int64) {
+	slog.Info("TUN tunnel stats",
+		"tx_packets", txPackets.Load(),
+		"rx_packets", rxPackets.Load(),
+		"tx_bytes", txBytes.Load(),
+		"rx_bytes", rxBytes.Load())
 }
 
 // ErrTUNNotSupported indicates the server doesn't support TUN mode

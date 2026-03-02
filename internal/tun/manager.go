@@ -221,9 +221,9 @@ func (m *TUNManager) Close() error {
 		ip := net.ParseIP(m.config.IP)
 		if ip != nil {
 			ip = ip.To4()
-			if ip != nil {
+			if ip != nil && len(ip) >= 3 {
 				// Convert netmask to CIDR prefix length
-				ipv4Subnet = fmt.Sprintf("%s.%s.%s.0%s", ip[0:1], ip[1:2], ip[2:3], m.config.Netmask)
+				ipv4Subnet = fmt.Sprintf("%d.%d.%d.0%s", ip[0], ip[1], ip[2], m.config.Netmask)
 			}
 		}
 	}

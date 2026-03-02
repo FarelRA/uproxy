@@ -155,7 +155,7 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 }
 
 // DialUDP runs on the client side. It binds a local UDP socket and pipes SOCKS5 UDP frames into SSH channels.
-func DialUDP(sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error) {
+func DialUDP(ctx context.Context, sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(listenIP, "0"))
 	if err != nil {
 		return nil, nil, err
@@ -230,7 +230,11 @@ func proxyUDPBidirectional(channel ssh.Channel, conn net.Conn, targetAddr string
 			if err != nil {
 				return
 			}
-			n, _ := conn.Write(data)
+			n, err := conn.Write(data)
+			if err != nil {
+				common.LogError("ssh_udp", "Failed to write UDP data", "error", err)
+				return
+			}
 			txBytes += int64(n)
 			conn.SetReadDeadline(time.Now().Add(udpTimeout))
 		}

@@ -5,6 +5,7 @@ package telemetry
 
 import (
 	"log/slog"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -14,6 +15,7 @@ type ConnTelemetry struct {
 	layer     string
 	interval  time.Duration
 	stopChan  chan struct{}
+	wg        sync.WaitGroup
 	txBytes   int64
 	rxBytes   int64
 	txPackets int64
@@ -32,6 +34,7 @@ func NewConnTelemetry(layer string, interval time.Duration) *ConnTelemetry {
 		interval: interval,
 		stopChan: make(chan struct{}),
 	}
+	t.wg.Add(1)
 	go t.logLoop()
 	return t
 }
@@ -70,6 +73,7 @@ func (t *ConnTelemetry) GetStats() (txBytes, rxBytes, txPackets, rxPackets, drop
 
 // logLoop periodically logs telemetry data
 func (t *ConnTelemetry) logLoop() {
+	defer t.wg.Done()
 	ticker := time.NewTicker(t.interval)
 	defer ticker.Stop()
 
@@ -101,7 +105,8 @@ func (t *ConnTelemetry) logLoop() {
 	}
 }
 
-// Close stops the telemetry logging loop
+// Close stops the telemetry logging loop and waits for it to finish
 func (t *ConnTelemetry) Close() {
 	close(t.stopChan)
+	t.wg.Wait()
 }

@@ -107,17 +107,29 @@ func DisableNAT(tunIface, outboundIface, ipv4Subnet, ipv6Subnet string) {
 
 	// Remove IPv4 iptables rules (must match exactly what EnableNAT created)
 	if ipv4Subnet != "" {
-		exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING", "-s", ipv4Subnet, "-o", outboundIface, "-j", "MASQUERADE").Run()
+		if err := exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING", "-s", ipv4Subnet, "-o", outboundIface, "-j", "MASQUERADE").Run(); err != nil {
+			slog.Debug("Failed to remove IPv4 NAT rule", "error", err)
+		}
 	}
-	exec.Command("iptables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run()
-	exec.Command("iptables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run()
+	if err := exec.Command("iptables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run(); err != nil {
+		slog.Debug("Failed to remove IPv4 forward rule", "error", err)
+	}
+	if err := exec.Command("iptables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run(); err != nil {
+		slog.Debug("Failed to remove IPv4 established rule", "error", err)
+	}
 
 	// Remove IPv6 ip6tables rules (must match exactly what EnableNAT created)
 	if ipv6Subnet != "" {
-		exec.Command("ip6tables", "-t", "nat", "-D", "POSTROUTING", "-s", ipv6Subnet, "-o", outboundIface, "-j", "MASQUERADE").Run()
+		if err := exec.Command("ip6tables", "-t", "nat", "-D", "POSTROUTING", "-s", ipv6Subnet, "-o", outboundIface, "-j", "MASQUERADE").Run(); err != nil {
+			slog.Debug("Failed to remove IPv6 NAT rule", "error", err)
+		}
 	}
-	exec.Command("ip6tables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run()
-	exec.Command("ip6tables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run()
+	if err := exec.Command("ip6tables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run(); err != nil {
+		slog.Debug("Failed to remove IPv6 forward rule", "error", err)
+	}
+	if err := exec.Command("ip6tables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run(); err != nil {
+		slog.Debug("Failed to remove IPv6 established rule", "error", err)
+	}
 
 	slog.Info("NAT disabled and rules cleaned up", "tun", tunIface, "outbound", outboundIface, "ipv4_subnet", ipv4Subnet, "ipv6_subnet", ipv6Subnet)
 }

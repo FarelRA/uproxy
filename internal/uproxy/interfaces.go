@@ -3,7 +3,6 @@ package uproxy
 import (
 	"context"
 	"net"
-	"time"
 
 	"uproxy/internal/network"
 )
@@ -11,12 +10,7 @@ import (
 // PacketConn defines the interface for packet-based network connections.
 // This allows for easier testing and mocking of UDP connections.
 type PacketConn interface {
-	ReadFrom([]byte) (int, net.Addr, error)
-	WriteTo([]byte, net.Addr) (int, error)
-	Close() error
-	LocalAddr() net.Addr
-	SetReadDeadline(t time.Time) error
-	SetWriteDeadline(t time.Time) error
+	net.PacketConn
 }
 
 // DiagnosticsProvider defines the interface for network diagnostics.
