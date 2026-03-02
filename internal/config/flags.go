@@ -92,3 +92,9 @@ func SetupSSHPaths(cfg *SSHConfig, isServer bool) {
 		cfg.KnownHosts = cfg.Dir + "/known_hosts"
 	}
 }
+
+// InitializeCommon performs common initialization steps for both client and server
+func InitializeCommon(logLevel, logFormat string, sshCfg *SSHConfig, isServer bool, initLogger func(string, string)) {
+	initLogger(logLevel, logFormat)
+	SetupSSHPaths(sshCfg, isServer)
+}

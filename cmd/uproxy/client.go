@@ -31,9 +31,7 @@ func clientCmd() *cobra.Command {
 		Use:   "client",
 		Short: "Run uproxy client (SOCKS5 or TUN mode)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			uproxy.InitLogger(cfg.LogLevel, cfg.LogFormat)
-			config.SetupSSHPaths(&cfg.SSH, false)
-
+			config.InitializeCommon(cfg.LogLevel, cfg.LogFormat, &cfg.SSH, false, uproxy.InitLogger)
 			return runClient(cmd.Context(), &cfg)
 		},
 	}

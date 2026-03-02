@@ -27,9 +27,7 @@ func serverCmd() *cobra.Command {
 		Use:   "server",
 		Short: "Run uproxy server (KCP+SSH SOCKS5/TUN server)",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			uproxy.InitLogger(cfg.LogLevel, cfg.LogFormat)
-			config.SetupSSHPaths(&cfg.SSH, true)
-
+			config.InitializeCommon(cfg.LogLevel, cfg.LogFormat, &cfg.SSH, true, uproxy.InitLogger)
 			return runServer(cmd.Context(), &cfg)
 		},
 	}
