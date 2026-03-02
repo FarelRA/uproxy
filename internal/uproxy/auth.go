@@ -178,6 +178,22 @@ func VerifyKnownHost(address string, remote net.Addr, pubKey ssh.PublicKey, sshD
 
 // promptAndAddKnownHost pauses the background daemon to interactively ask the user
 // if they want to trust a completely new proxy server.
+// appendKnownHostEntry appends a host key entry to the known_hosts file
+func appendKnownHostEntry(knownHostsPath, normalizedHost string, pubKey ssh.PublicKey) error {
+	f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to open known_hosts for writing: %w", err)
+	}
+	defer f.Close()
+
+	line := knownhosts.Line([]string{normalizedHost}, pubKey)
+	if _, err := f.WriteString(line + "\n"); err != nil {
+		return fmt.Errorf("failed to append to known_hosts: %w", err)
+	}
+
+	return nil
+}
+
 func promptAndAddKnownHost(normalizedHost string, pubKey ssh.PublicKey, knownHostsPath string) error {
 	// Attempt to bypass background detached streams by writing straight to the TTY
 	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
@@ -203,15 +219,8 @@ func promptAndAddKnownHost(normalizedHost string, pubKey ssh.PublicKey, knownHos
 		return errors.New("host key verification failed (user rejected)")
 	}
 
-	f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to open known_hosts for writing: %w", err)
-	}
-	defer f.Close()
-
-	line := knownhosts.Line([]string{normalizedHost}, pubKey)
-	if _, err := f.WriteString(line + "\n"); err != nil {
-		return fmt.Errorf("failed to append to known_hosts: %w", err)
+	if err := appendKnownHostEntry(knownHostsPath, normalizedHost, pubKey); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "Warning: Permanently added '%s' (%s) to the list of known hosts.\n", normalizedHost, pubKey.Type())
