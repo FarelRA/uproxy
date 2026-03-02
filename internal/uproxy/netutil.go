@@ -59,6 +59,8 @@ func firstIPOfInterface(ifaceName string, version int) (net.IP, error) {
 		versionName = "IPv6"
 	}
 
+	slog.Debug("Searching for IP address on interface", "interface", ifaceName, "version", versionName, "addresses_count", len(addrs))
+
 	for _, addr := range addrs {
 		var ip net.IP
 		switch v := addr.(type) {
@@ -68,17 +70,22 @@ func firstIPOfInterface(ifaceName string, version int) (net.IP, error) {
 			ip = v.IP
 		}
 
+		slog.Debug("Examining address", "interface", ifaceName, "address", ip.String())
+
 		if version == 4 {
 			if ip4 := ip.To4(); ip4 != nil {
+				slog.Debug("Found matching IPv4 address", "interface", ifaceName, "ip", ip4.String())
 				return ip4, nil
 			}
 		} else if version == 6 {
 			// Check if it's IPv6 (not IPv4) and not link-local
 			if ip.To4() == nil && ip.To16() != nil && !ip.IsLinkLocalUnicast() {
+				slog.Debug("Found matching IPv6 address", "interface", ifaceName, "ip", ip.String())
 				return ip, nil
 			}
 		}
 	}
+	slog.Warn("No matching IP address found", "interface", ifaceName, "version", versionName, "addresses_examined", len(addrs))
 	return nil, fmt.Errorf("no %s address found on interface %s", versionName, ifaceName)
 }
 
