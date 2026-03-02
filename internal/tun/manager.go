@@ -253,13 +253,8 @@ func (m *TUNManager) WritePacket(packet []byte) error {
 }
 
 // Close shuts down the TUN manager and cleans up resources.
-func (m *TUNManager) Close() error {
-	// Cancel context to stop dispatcher goroutine
-	m.cancel()
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
+// cleanupClients closes all client routes and clears the client map
+func (m *TUNManager) cleanupClients() {
 	// Close all client routes (avoid double-close for dual-stack clients)
 	closed := make(map[*ClientRoute]bool)
 	for _, route := range m.clients {
@@ -269,8 +264,15 @@ func (m *TUNManager) Close() error {
 		}
 	}
 	m.clients = make(map[string]*ClientRoute)
+}
 
-	// Cleanup NAT - construct subnet strings from config
+// cleanupNAT disables NAT rules if auto-route was enabled
+func (m *TUNManager) cleanupNAT() {
+	if !m.autoRoute {
+		return
+	}
+
+	// Construct subnet strings from config
 	ipv4Subnet := ""
 	if m.config.IP != "" && m.config.Netmask != "" {
 		// Parse IP and netmask to get network address
@@ -296,10 +298,18 @@ func (m *TUNManager) Close() error {
 		}
 	}
 
-	// Conditionally cleanup NAT if auto-route was enabled
-	if m.autoRoute {
-		DisableNAT(m.device.Name(), m.outbound, ipv4Subnet, ipv6Subnet)
-	}
+	DisableNAT(m.device.Name(), m.outbound, ipv4Subnet, ipv6Subnet)
+}
+
+func (m *TUNManager) Close() error {
+	// Cancel context to stop dispatcher goroutine
+	m.cancel()
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.cleanupClients()
+	m.cleanupNAT()
 
 	// Close TUN device
 	return m.device.Close()
