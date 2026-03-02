@@ -36,19 +36,24 @@ type KCPConfig struct {
 	SndWnd           int
 	RcvWnd           int
 	MTU              int
+
+	cachedKCPConfig *kcp.Config // cached conversion result
 }
 
-// ToKCPConfig converts to internal kcp.Config
+// ToKCPConfig converts to internal kcp.Config (cached)
 func (c *KCPConfig) ToKCPConfig() *kcp.Config {
-	return &kcp.Config{
-		NoDelay:          c.NoDelay,
-		Interval:         c.Interval,
-		Resend:           c.Resend,
-		NoCongestionCtrl: c.NoCongestionCtrl,
-		SndWnd:           c.SndWnd,
-		RcvWnd:           c.RcvWnd,
-		MTU:              c.MTU,
+	if c.cachedKCPConfig == nil {
+		c.cachedKCPConfig = &kcp.Config{
+			NoDelay:          c.NoDelay,
+			Interval:         c.Interval,
+			Resend:           c.Resend,
+			NoCongestionCtrl: c.NoCongestionCtrl,
+			SndWnd:           c.SndWnd,
+			RcvWnd:           c.RcvWnd,
+			MTU:              c.MTU,
+		}
 	}
+	return c.cachedKCPConfig
 }
 
 // SSHConfig holds SSH configuration paths
