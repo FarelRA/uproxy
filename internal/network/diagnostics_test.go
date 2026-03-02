@@ -258,8 +258,8 @@ func TestDiagnoseFailure_RouteChanged(t *testing.T) {
 	diag := NewDiagnostics("example.com:443", logger)
 
 	// Set initial state
-	diag.lastGateway = "192.168.1.1"
-	diag.lastSrcIP = "192.168.1.100"
+	diag.lastRoute.gateway = "192.168.1.1"
+	diag.lastRoute.srcIP = "192.168.1.100"
 
 	result := diag.DiagnoseFailure(context.Background())
 
@@ -414,18 +414,18 @@ func TestDiagnoseFailure_InitialStateUpdate(t *testing.T) {
 	diag := NewDiagnostics("example.com:443", logger)
 
 	// Initially empty
-	if diag.lastGateway != "" {
-		t.Errorf("Initial lastGateway should be empty, got %v", diag.lastGateway)
+	if diag.lastRoute.gateway != "" {
+		t.Errorf("Initial lastGateway should be empty, got %v", diag.lastRoute.gateway)
 	}
 
 	diag.DiagnoseFailure(context.Background())
 
 	// Should be updated after first call
-	if diag.lastGateway != "192.168.1.1" {
-		t.Errorf("lastGateway should be updated to 192.168.1.1, got %v", diag.lastGateway)
+	if diag.lastRoute.gateway != "192.168.1.1" {
+		t.Errorf("lastGateway should be updated to 192.168.1.1, got %v", diag.lastRoute.gateway)
 	}
-	if diag.lastSrcIP != "192.168.1.100" {
-		t.Errorf("lastSrcIP should be updated to 192.168.1.100, got %v", diag.lastSrcIP)
+	if diag.lastRoute.srcIP != "192.168.1.100" {
+		t.Errorf("lastSrcIP should be updated to 192.168.1.100, got %v", diag.lastRoute.srcIP)
 	}
 }
 
