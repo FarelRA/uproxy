@@ -80,9 +80,7 @@ func runClient(ctx context.Context, cfg *config.ClientConfig) error {
 	// Create connection manager
 	connMgr := newConnectionManager(cfg, signer)
 	defer func() {
-		if err := connMgr.cleanup(); err != nil {
-			slog.Error("Failed to cleanup connection manager", "error", err)
-		}
+		connMgr.cleanup()
 	}()
 
 	// Start connection loop in background

@@ -696,6 +696,141 @@ func (kcp *KCP) wnd_unused() uint16 {
 }
 
 // flush pending data
+// flushAcks flushes pending acknowledgements
+func (kcp *KCP) flushAcks(seg *segment, ptr []byte, makeSpace func(int)) []byte {
+	if len(kcp.acklist) == 0 {
+		return ptr
+	}
+
+	for i, ack := range kcp.acklist {
+		makeSpace(IKCP_OVERHEAD)
+		// filter jitters caused by bufferbloat
+		if _itimediff(ack.sn, kcp.rcv_nxt) >= 0 || len(kcp.acklist)-1 == i {
+			seg.sn, seg.ts = ack.sn, ack.ts
+			ptr = seg.encode(ptr)
+			kcp.debugLog(IKCP_LOG_OUT_ACK, "conv", seg.conv, "sn", seg.sn, "una", seg.una, "ts", seg.ts)
+		}
+	}
+	kcp.acklist = kcp.acklist[0:0]
+	return ptr
+}
+
+// flushProbes handles window probing logic
+func (kcp *KCP) flushProbes(seg *segment, ptr []byte, makeSpace func(int)) []byte {
+	// probe window size (if remote window size equals zero)
+	if kcp.rmt_wnd == 0 {
+		current := currentMs()
+		if kcp.probe_wait == 0 {
+			kcp.probe_wait = IKCP_PROBE_INIT
+			kcp.ts_probe = current + kcp.probe_wait
+		} else {
+			if _itimediff(current, kcp.ts_probe) >= 0 {
+				if kcp.probe_wait < IKCP_PROBE_INIT {
+					kcp.probe_wait = IKCP_PROBE_INIT
+				}
+				kcp.probe_wait += kcp.probe_wait / 2
+				if kcp.probe_wait > IKCP_PROBE_LIMIT {
+					kcp.probe_wait = IKCP_PROBE_LIMIT
+				}
+				kcp.ts_probe = current + kcp.probe_wait
+				kcp.probe |= IKCP_ASK_SEND
+			}
+		}
+	} else {
+		kcp.ts_probe = 0
+		kcp.probe_wait = 0
+	}
+
+	// flush window probing commands
+	if (kcp.probe & IKCP_ASK_SEND) != 0 {
+		seg.cmd = IKCP_CMD_WASK
+		makeSpace(IKCP_OVERHEAD)
+		ptr = seg.encode(ptr)
+		kcp.debugLog(IKCP_LOG_OUT_WASK, "conv", seg.conv, "wnd", seg.wnd, "ts", seg.ts)
+	}
+
+	if (kcp.probe & IKCP_ASK_TELL) != 0 {
+		seg.cmd = IKCP_CMD_WINS
+		makeSpace(IKCP_OVERHEAD)
+		ptr = seg.encode(ptr)
+		kcp.debugLog(IKCP_LOG_OUT_WINS, "conv", seg.conv, "wnd", seg.wnd, "ts", seg.ts)
+	}
+
+	kcp.probe = 0
+	return ptr
+}
+
+// flushSegments transmits data segments
+func (kcp *KCP) flushSegments(seg *segment, ptr []byte, makeSpace func(int), cwnd, resent uint32, newSegsCount int) ([]byte, uint32, uint64, uint64, uint64, uint64) {
+	current := currentMs()
+	var change, lostSegs, fastRetransSegs, earlyRetransSegs uint64
+	nextUpdate := kcp.interval
+
+	for segment := range kcp.snd_buf.ForEach {
+		needsend := false
+		if segment.acked == 1 {
+			continue
+		}
+		if segment.xmit == 0 { // initial transmit
+			needsend = true
+			segment.rto = kcp.rx_rto
+			segment.resendts = current + segment.rto
+		} else if segment.fastack >= resent && segment.fastack != 0xFFFFFFFF { // fast retransmit
+			needsend = true
+			segment.fastack = 0xFFFFFFFF // must wait until RTO to reset
+			segment.rto = kcp.rx_rto
+			segment.resendts = current + segment.rto
+			change++
+			fastRetransSegs++
+		} else if segment.fastack > 0 && segment.fastack != 0xFFFFFFFF && newSegsCount == 0 { // early retransmit
+			needsend = true
+			segment.fastack = 0xFFFFFFFF
+			segment.rto = kcp.rx_rto
+			segment.resendts = current + segment.rto
+			change++
+			earlyRetransSegs++
+		} else if _itimediff(current, segment.resendts) >= 0 { // RTO
+			needsend = true
+			if kcp.nodelay == 0 {
+				segment.rto += kcp.rx_rto
+			} else {
+				segment.rto += kcp.rx_rto / 2
+			}
+			segment.fastack = 0
+			segment.resendts = current + segment.rto
+			lostSegs++
+		}
+
+		if needsend {
+			current = currentMs()
+			segment.xmit++
+			segment.ts = current
+			segment.wnd = seg.wnd
+			segment.una = seg.una
+
+			need := IKCP_OVERHEAD + len(segment.data)
+			makeSpace(need)
+			ptr = segment.encode(ptr)
+			copy(ptr, segment.data)
+			ptr = ptr[len(segment.data):]
+
+			kcp.debugLog(IKCP_LOG_OUT_PUSH, "conv", segment.conv, "sn", segment.sn, "frg", segment.frg, "una", segment.una, "ts", segment.ts, "xmit", segment.xmit, "datalen", len(segment.data))
+
+			// Check dead link (0 = disabled)
+			if kcp.dead_link > 0 && segment.xmit >= kcp.dead_link {
+				kcp.state = 0xFFFFFFFF
+			}
+		}
+
+		// get the nearest rto
+		if rto := _itimediff(segment.resendts, current); rto > 0 && uint32(rto) < nextUpdate {
+			nextUpdate = uint32(rto)
+		}
+	}
+
+	return ptr, nextUpdate, change, lostSegs, fastRetransSegs, earlyRetransSegs
+}
+
 func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 	var seg segment
 	seg.conv = kcp.conv
@@ -730,65 +865,13 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 		atomic.StoreUint64(&DefaultSnmp.RingBufferSndBuffer, uint64(kcp.snd_buf.Len()))
 	}()
 
-	/*
-	 * flush acknowledges
-	 */
+	// flush acknowledges
 	if flushType == IKCP_FLUSH_ACKONLY || flushType == IKCP_FLUSH_FULL {
-		for i, ack := range kcp.acklist {
-			makeSpace(IKCP_OVERHEAD)
-			// filter jitters caused by bufferbloat
-			if _itimediff(ack.sn, kcp.rcv_nxt) >= 0 || len(kcp.acklist)-1 == i {
-				seg.sn, seg.ts = ack.sn, ack.ts
-				ptr = seg.encode(ptr)
-				kcp.debugLog(IKCP_LOG_OUT_ACK, "conv", seg.conv, "sn", seg.sn, "una", seg.una, "ts", seg.ts)
-			}
-		}
-		kcp.acklist = kcp.acklist[0:0]
+		ptr = kcp.flushAcks(&seg, ptr, makeSpace)
 	}
 
-	// probe window size (if remote window size equals zero)
-	if kcp.rmt_wnd == 0 {
-		current := currentMs()
-		if kcp.probe_wait == 0 {
-			kcp.probe_wait = IKCP_PROBE_INIT
-			kcp.ts_probe = current + kcp.probe_wait
-		} else {
-			if _itimediff(current, kcp.ts_probe) >= 0 {
-				if kcp.probe_wait < IKCP_PROBE_INIT {
-					kcp.probe_wait = IKCP_PROBE_INIT
-				}
-				kcp.probe_wait += kcp.probe_wait / 2
-				if kcp.probe_wait > IKCP_PROBE_LIMIT {
-					kcp.probe_wait = IKCP_PROBE_LIMIT
-				}
-				kcp.ts_probe = current + kcp.probe_wait
-				kcp.probe |= IKCP_ASK_SEND
-			}
-		}
-	} else {
-		kcp.ts_probe = 0
-		kcp.probe_wait = 0
-	}
-
-	/*
-	 * flush window probing commands
-	 */
-	if (kcp.probe & IKCP_ASK_SEND) != 0 {
-		seg.cmd = IKCP_CMD_WASK
-		makeSpace(IKCP_OVERHEAD)
-		ptr = seg.encode(ptr)
-		kcp.debugLog(IKCP_LOG_OUT_WASK, "conv", seg.conv, "wnd", seg.wnd, "ts", seg.ts)
-	}
-
-	// flush window probing commands
-	if (kcp.probe & IKCP_ASK_TELL) != 0 {
-		seg.cmd = IKCP_CMD_WINS
-		makeSpace(IKCP_OVERHEAD)
-		ptr = seg.encode(ptr)
-		kcp.debugLog(IKCP_LOG_OUT_WINS, "conv", seg.conv, "wnd", seg.wnd, "ts", seg.ts)
-	}
-
-	kcp.probe = 0
+	// flush probes
+	ptr = kcp.flushProbes(&seg, ptr, makeSpace)
 
 	// calculate window size
 	cwnd := min(kcp.snd_wnd, kcp.rmt_wnd)
@@ -822,75 +905,12 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 		resent = 0xffffffff
 	}
 
-	/*
-	 * flush segments
-	 */
-	current := currentMs()
-	var change, lostSegs, fastRetransSegs, earlyRetransSegs uint64
+	// flush segments
 	nextUpdate = kcp.interval
+	var change, lostSegs, fastRetransSegs, earlyRetransSegs uint64
 
 	if flushType == IKCP_FLUSH_FULL {
-		for segment := range kcp.snd_buf.ForEach {
-			needsend := false
-			if segment.acked == 1 {
-				continue
-			}
-			if segment.xmit == 0 { // initial transmit
-				needsend = true
-				segment.rto = kcp.rx_rto
-				segment.resendts = current + segment.rto
-			} else if segment.fastack >= resent && segment.fastack != 0xFFFFFFFF { // fast retransmit
-				needsend = true
-				segment.fastack = 0xFFFFFFFF // must wait until RTO to reset
-				segment.rto = kcp.rx_rto
-				segment.resendts = current + segment.rto
-				change++
-				fastRetransSegs++
-			} else if segment.fastack > 0 && segment.fastack != 0xFFFFFFFF && newSegsCount == 0 { // early retransmit
-				needsend = true
-				segment.fastack = 0xFFFFFFFF
-				segment.rto = kcp.rx_rto
-				segment.resendts = current + segment.rto
-				change++
-				earlyRetransSegs++
-			} else if _itimediff(current, segment.resendts) >= 0 { // RTO
-				needsend = true
-				if kcp.nodelay == 0 {
-					segment.rto += kcp.rx_rto
-				} else {
-					segment.rto += kcp.rx_rto / 2
-				}
-				segment.fastack = 0
-				segment.resendts = current + segment.rto
-				lostSegs++
-			}
-
-			if needsend {
-				current = currentMs()
-				segment.xmit++
-				segment.ts = current
-				segment.wnd = seg.wnd
-				segment.una = seg.una
-
-				need := IKCP_OVERHEAD + len(segment.data)
-				makeSpace(need)
-				ptr = segment.encode(ptr)
-				copy(ptr, segment.data)
-				ptr = ptr[len(segment.data):]
-
-				kcp.debugLog(IKCP_LOG_OUT_PUSH, "conv", segment.conv, "sn", segment.sn, "frg", segment.frg, "una", segment.una, "ts", segment.ts, "xmit", segment.xmit, "datalen", len(segment.data))
-
-				// Check dead link (0 = disabled)
-				if kcp.dead_link > 0 && segment.xmit >= kcp.dead_link {
-					kcp.state = 0xFFFFFFFF
-				}
-			}
-
-			// get the nearest rto
-			if rto := _itimediff(segment.resendts, current); rto > 0 && uint32(rto) < nextUpdate {
-				nextUpdate = uint32(rto)
-			}
-		}
+		ptr, nextUpdate, change, lostSegs, fastRetransSegs, earlyRetransSegs = kcp.flushSegments(&seg, ptr, makeSpace, cwnd, resent, newSegsCount)
 	}
 
 	// counter updates
