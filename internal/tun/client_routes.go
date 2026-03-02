@@ -173,6 +173,16 @@ func addDefaultTUNRoutes(tunDevice, ipv6gw string) error {
 }
 
 // CleanupClientRoutes removes the routes added by SetupClientRoutes
+// deleteRoute executes an ip route delete command with error logging
+func deleteRoute(args []string, description string) {
+	cmd := exec.Command("ip", args...)
+	if err := cmd.Run(); err != nil {
+		slog.Warn("Failed to remove route", "description", description, "error", err)
+	} else {
+		slog.Info("Removed route", "description", description)
+	}
+}
+
 func CleanupClientRoutes(info *RouteInfo) {
 	if info == nil {
 		return
@@ -184,21 +194,11 @@ func CleanupClientRoutes(info *RouteInfo) {
 		"tun_device", info.TunDevice)
 
 	// Remove default route through TUN (IPv4)
-	cmd := exec.Command("ip", "route", "del", "default", "dev", info.TunDevice)
-	if err := cmd.Run(); err != nil {
-		slog.Warn("Failed to remove default IPv4 route", "error", err)
-	} else {
-		slog.Info("Removed default IPv4 route", "dev", info.TunDevice)
-	}
+	deleteRoute([]string{"route", "del", "default", "dev", info.TunDevice}, "default IPv4 route")
 
 	// Remove default route through TUN (IPv6)
 	if info.OriginalIPv6GW != "" {
-		cmd = exec.Command("ip", "-6", "route", "del", "default", "dev", info.TunDevice)
-		if err := cmd.Run(); err != nil {
-			slog.Warn("Failed to remove default IPv6 route", "error", err)
-		} else {
-			slog.Info("Removed default IPv6 route", "dev", info.TunDevice)
-		}
+		deleteRoute([]string{"-6", "route", "del", "default", "dev", info.TunDevice}, "default IPv6 route")
 	}
 
 	// Remove server IPv4 exception route
@@ -208,13 +208,7 @@ func CleanupClientRoutes(info *RouteInfo) {
 			args = append(args, "src", info.OriginalSrcIP)
 		}
 		args = append(args, "metric", "600")
-
-		cmd = exec.Command("ip", args...)
-		if err := cmd.Run(); err != nil {
-			slog.Warn("Failed to remove server IPv4 route", "error", err)
-		} else {
-			slog.Info("Removed server IPv4 exception route", "server_ip", info.ServerIPv4)
-		}
+		deleteRoute(args, "server IPv4 exception route")
 	}
 
 	// Remove server IPv6 exception route
@@ -224,13 +218,7 @@ func CleanupClientRoutes(info *RouteInfo) {
 			args = append(args, "src", info.OriginalIPv6SrcIP)
 		}
 		args = append(args, "metric", "600")
-
-		cmd = exec.Command("ip", args...)
-		if err := cmd.Run(); err != nil {
-			slog.Warn("Failed to remove server IPv6 route", "error", err)
-		} else {
-			slog.Info("Removed server IPv6 exception route", "server_ip", info.ServerIPv6)
-		}
+		deleteRoute(args, "server IPv6 exception route")
 	}
 
 	slog.Info("Client routes cleaned up")
