@@ -75,12 +75,17 @@ type DiagnosticResult struct {
 	Interface   string
 }
 
+// routeState holds the previous route state for change detection
+type routeState struct {
+	gateway string
+	srcIP   string
+}
+
 // Diagnostics provides network failure diagnosis capabilities
 type Diagnostics struct {
-	serverAddr  string
-	lastGateway string
-	lastSrcIP   string
-	logger      *slog.Logger
+	serverAddr string
+	lastRoute  routeState
+	logger     *slog.Logger
 }
 
 // NewDiagnostics creates a new network diagnostics instance
@@ -135,34 +140,25 @@ func (d *Diagnostics) DiagnoseFailure(ctx context.Context) DiagnosticResult {
 // checkRouteChange detects if the route has changed and updates state accordingly
 func (d *Diagnostics) checkRouteChange(gateway, srcIP, iface string) (bool, DiagnosticResult) {
 	// First connection - initialize state
-	if d.lastGateway == "" {
-		d.lastGateway = gateway
-		d.lastSrcIP = srcIP
+	if d.lastRoute.gateway == "" {
+		d.lastRoute = routeState{gateway: gateway, srcIP: srcIP}
 		return false, DiagnosticResult{}
 	}
 
-	// No change detected
-	if d.lastGateway == gateway {
-		return false, DiagnosticResult{}
+	// Check if route changed
+	if d.lastRoute.gateway != gateway || d.lastRoute.srcIP != srcIP {
+		msg := fmt.Sprintf("route changed: gateway %s->%s, src %s->%s",
+			d.lastRoute.gateway, gateway, d.lastRoute.srcIP, srcIP)
+		d.lastRoute = routeState{gateway: gateway, srcIP: srcIP}
+		return true, DiagnosticResult{
+			FailureType: FailureRouteChanged,
+			Message:     msg,
+			Gateway:     gateway,
+			Interface:   iface,
+		}
 	}
 
-	// Route changed
-	d.logger.Info("Route change detected",
-		"old_gateway", d.lastGateway,
-		"new_gateway", gateway,
-		"old_src_ip", d.lastSrcIP,
-		"new_src_ip", srcIP)
-
-	oldGateway := d.lastGateway
-	d.lastGateway = gateway
-	d.lastSrcIP = srcIP
-
-	return true, DiagnosticResult{
-		FailureType: FailureRouteChanged,
-		Message:     fmt.Sprintf("gateway changed from %s to %s", oldGateway, gateway),
-		Gateway:     gateway,
-		Interface:   iface,
-	}
+	return false, DiagnosticResult{}
 }
 
 // getDefaultRoute retrieves the default gateway, source IP, and interface

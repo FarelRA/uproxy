@@ -17,18 +17,29 @@ import (
 // homeDirFunc is a variable for dependency injection in tests
 var homeDirFunc = os.UserHomeDir
 
+// cachedSSHDir caches the resolved SSH directory to avoid repeated lookups
+var cachedSSHDir string
+
 // resolveSSHDir resolves the SSH directory path.
 // If sshDir is provided, it returns that directory.
-// Otherwise, it returns ~/.ssh directory.
+// Otherwise, it returns ~/.ssh directory (cached after first lookup).
 func resolveSSHDir(sshDir string) (string, error) {
 	if sshDir != "" {
 		return sshDir, nil
 	}
+
+	// Return cached value if available
+	if cachedSSHDir != "" {
+		return cachedSSHDir, nil
+	}
+
 	home, err := homeDirFunc()
 	if err != nil {
 		return "", fmt.Errorf("failed to get user home directory: %w", err)
 	}
-	return filepath.Join(home, ".ssh"), nil
+
+	cachedSSHDir = filepath.Join(home, ".ssh")
+	return cachedSSHDir, nil
 }
 
 // LoadPrivateKey attempts to load the SSH client identity file.

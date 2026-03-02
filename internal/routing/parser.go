@@ -36,34 +36,39 @@ type RouteInfo struct {
 	SrcIP     string
 }
 
+// routeKeywords contains keywords that should not be used as route values
+var routeKeywords = map[string]bool{
+	"via": true, "dev": true, "src": true, "proto": true,
+	"metric": true, "scope": true, "link": true, "default": true,
+}
+
+// isRouteKeyword checks if a field is a route keyword
+func isRouteKeyword(field string) bool {
+	return routeKeywords[field]
+}
+
 // ParseIPRouteOutput parses the output of "ip route" commands
 // Handles output like: "default via 10.0.0.1 dev wlan0 src 10.0.0.118 metric 600"
 func ParseIPRouteOutput(output string) (*RouteInfo, error) {
 	fields := strings.Fields(output)
 	info := &RouteInfo{}
 
-	// Keywords that should not be used as values
-	keywords := map[string]bool{
-		"via": true, "dev": true, "src": true, "proto": true,
-		"metric": true, "scope": true, "link": true, "default": true,
-	}
-
 	for i, field := range fields {
 		if field == "via" && i+1 < len(fields) && info.Gateway == "" {
 			nextField := fields[i+1]
-			if !keywords[nextField] {
+			if !isRouteKeyword(nextField) {
 				info.Gateway = nextField
 			}
 		}
 		if field == "dev" && i+1 < len(fields) && info.Interface == "" {
 			nextField := fields[i+1]
-			if !keywords[nextField] {
+			if !isRouteKeyword(nextField) {
 				info.Interface = nextField
 			}
 		}
 		if field == "src" && i+1 < len(fields) && info.SrcIP == "" {
 			nextField := fields[i+1]
-			if !keywords[nextField] {
+			if !isRouteKeyword(nextField) {
 				info.SrcIP = nextField
 			}
 		}
