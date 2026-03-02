@@ -50,12 +50,12 @@ func TestNewDiagnostics(t *testing.T) {
 		t.Error("logger not set correctly")
 	}
 
-	if diag.lastGateway != "" {
-		t.Errorf("lastGateway should be empty initially, got %v", diag.lastGateway)
+	if diag.lastRoute.gateway != "" {
+		t.Errorf("lastRoute.gateway should be empty initially, got %v", diag.lastRoute.gateway)
 	}
 
-	if diag.lastSrcIP != "" {
-		t.Errorf("lastSrcIP should be empty initially, got %v", diag.lastSrcIP)
+	if diag.lastRoute.srcIP != "" {
+		t.Errorf("lastRoute.srcIP should be empty initially, got %v", diag.lastRoute.srcIP)
 	}
 }
 
