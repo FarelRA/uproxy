@@ -119,6 +119,11 @@ func (rm *RouteMonitor) monitorNetworkChanges() {
 	}
 }
 
+// routesChanged checks if any route parameters have changed
+func routesChanged(gw, srcIP, ipv6gw, ipv6src string, lastGW, lastSrcIP, lastIPv6GW, lastIPv6SrcIP *string) bool {
+	return gw != *lastGW || srcIP != *lastSrcIP || ipv6gw != *lastIPv6GW || ipv6src != *lastIPv6SrcIP
+}
+
 // checkAndUpdateRoutes checks if routes need updating and reconfigures if needed
 func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, lastIPv6SrcIP *string) {
 	gw, iface, srcIP, err := GetDefaultGateway()
@@ -130,12 +135,7 @@ func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, last
 	ipv6gw, ipv6iface, ipv6src, _ := GetDefaultIPv6Gateway()
 
 	// Check if anything changed
-	gwChanged := gw != *lastGW
-	srcChanged := srcIP != *lastSrcIP
-	ipv6gwChanged := ipv6gw != *lastIPv6GW
-	ipv6srcChanged := ipv6src != *lastIPv6SrcIP
-
-	if !gwChanged && !srcChanged && !ipv6gwChanged && !ipv6srcChanged {
+	if !routesChanged(gw, srcIP, ipv6gw, ipv6src, lastGW, lastSrcIP, lastIPv6GW, lastIPv6SrcIP) {
 		return
 	}
 

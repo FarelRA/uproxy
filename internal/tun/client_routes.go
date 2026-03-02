@@ -96,6 +96,25 @@ func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
 	return info, nil
 }
 
+// addRouteWithRetry adds a route and handles "File exists" errors gracefully
+func addRouteWithRetry(args []string, routeDesc string, critical bool) error {
+	cmd := exec.Command("ip", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(output), "File exists") {
+			slog.Warn("Route already exists", "route", routeDesc)
+			return nil
+		}
+		if critical {
+			return fmt.Errorf("failed to add route %s: %w, output: %s", routeDesc, err, output)
+		}
+		slog.Warn("Failed to add route", "route", routeDesc, "error", err, "output", string(output))
+		return nil
+	}
+	slog.Info("Added route", "route", routeDesc)
+	return nil
+}
+
 // addServerExceptionRoutes adds routes for server IPs through original gateway
 func addServerExceptionRoutes(info *RouteInfo) error {
 	// Add route for VPN server IPv4 through original gateway (so VPN traffic doesn't loop)
@@ -106,15 +125,9 @@ func addServerExceptionRoutes(info *RouteInfo) error {
 		}
 		args = append(args, "metric", "600")
 
-		cmd := exec.Command("ip", args...)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			// Route might already exist, check if it's a duplicate error
-			if !strings.Contains(string(output), "File exists") {
-				return fmt.Errorf("failed to add server IPv4 route: %w, output: %s", err, output)
-			}
-			slog.Warn("Server IPv4 route already exists", "server_ip", info.ServerIPv4)
-		} else {
-			slog.Info("Added server IPv4 exception route", "server_ip", info.ServerIPv4, "via", info.OriginalGW, "dev", info.OriginalIface, "src", info.OriginalSrcIP)
+		routeDesc := fmt.Sprintf("IPv4 %s via %s dev %s", info.ServerIPv4, info.OriginalGW, info.OriginalIface)
+		if err := addRouteWithRetry(args, routeDesc, true); err != nil {
+			return err
 		}
 	}
 
@@ -126,15 +139,9 @@ func addServerExceptionRoutes(info *RouteInfo) error {
 		}
 		args = append(args, "metric", "600")
 
-		cmd := exec.Command("ip", args...)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			if !strings.Contains(string(output), "File exists") {
-				slog.Warn("Failed to add server IPv6 route", "error", err, "output", string(output))
-			} else {
-				slog.Warn("Server IPv6 route already exists", "server_ip", info.ServerIPv6)
-			}
-		} else {
-			slog.Info("Added server IPv6 exception route", "server_ip", info.ServerIPv6, "via", info.OriginalIPv6GW, "dev", info.OriginalIPv6Iface, "src", info.OriginalIPv6SrcIP)
+		routeDesc := fmt.Sprintf("IPv6 %s via %s dev %s", info.ServerIPv6, info.OriginalIPv6GW, info.OriginalIPv6Iface)
+		if err := addRouteWithRetry(args, routeDesc, false); err != nil {
+			return err
 		}
 	}
 

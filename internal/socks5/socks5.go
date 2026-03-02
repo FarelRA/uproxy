@@ -15,10 +15,13 @@ import (
 
 // SOCKS5 error codes
 const (
-	socks5Success                  = 0x00
-	socks5ErrorGeneralFailure      = 0x05
-	socks5ErrorCommandNotSupported = 0x07
+	replySuccess             = 0x00
+	replyGeneralFailure      = 0x05
+	replyCommandNotSupported = 0x07
 )
+
+// maxConcurrentConnections limits the number of concurrent SOCKS5 connections
+const maxConcurrentConnections = 1000
 
 // writeSOCKS5Error writes a SOCKS5 error response to the connection
 func writeSOCKS5Error(conn net.Conn, errorCode byte) error {
@@ -31,8 +34,8 @@ func writeSOCKS5Error(conn net.Conn, errorCode byte) error {
 }
 
 // writeSOCKS5Success writes a SOCKS5 success response to the connection
-func writeSOCKS5Success(conn net.Conn) error {
-	response := []byte{0x05, socks5Success, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
+func writeSOCKS5Success(conn net.Conn, bindAddr string) error {
+	response := []byte{0x05, replySuccess, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
 	if _, err := conn.Write(response); err != nil {
 		common.LogDebug("socks5", "Failed to send success response", "error", err)
 		return err
@@ -54,6 +57,13 @@ func ServeSOCKS5(ctx context.Context, listenAddr string, dialTCP func(context.Co
 	}
 	defer closeOnce.Do(closeListener)
 
+	// Track active connection handlers for graceful shutdown
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	// Connection limiter to prevent resource exhaustion
+	semaphore := make(chan struct{}, maxConcurrentConnections)
+
 	go func() {
 		<-ctx.Done()
 		closeOnce.Do(closeListener)
@@ -69,11 +79,25 @@ func ServeSOCKS5(ctx context.Context, listenAddr string, dialTCP func(context.Co
 				continue
 			}
 		}
-		go handleSOCKS5Client(ctx, conn, dialTCP, dialUDP)
+
+		// Try to acquire semaphore slot
+		select {
+		case semaphore <- struct{}{}:
+			wg.Add(1)
+			go func(c net.Conn) {
+				defer func() { <-semaphore }()
+				handleSOCKS5Client(ctx, c, dialTCP, dialUDP, &wg)
+			}(conn)
+		default:
+			// Connection limit reached, reject connection
+			common.LogDebug("socks5", "Connection limit reached, rejecting connection", "client", conn.RemoteAddr().String())
+			conn.Close()
+		}
 	}
 }
 
-func handleSOCKS5Client(ctx context.Context, conn net.Conn, dialTCP func(context.Context, string) (net.Conn, error), dialUDP func(context.Context) (net.Addr, io.Closer, error)) {
+func handleSOCKS5Client(ctx context.Context, conn net.Conn, dialTCP func(context.Context, string) (net.Conn, error), dialUDP func(context.Context) (net.Addr, io.Closer, error), wg *sync.WaitGroup) {
+	defer wg.Done()
 	defer conn.Close()
 	clientAddr := conn.RemoteAddr().String()
 
@@ -92,7 +116,7 @@ func handleSOCKS5Client(ctx context.Context, conn net.Conn, dialTCP func(context
 	case config.SOCKS5CommandUDPAssociate: // UDP ASSOCIATE
 		handleUDPAssociate(ctx, conn, clientAddr, dialUDP)
 	default: // Command not supported
-		_ = writeSOCKS5Error(conn, socks5ErrorCommandNotSupported)
+		_ = writeSOCKS5Error(conn, replyCommandNotSupported)
 	}
 }
 
@@ -128,42 +152,55 @@ func parseSOCKS5Request(conn net.Conn) (cmd byte, targetAddr string, err error) 
 	cmd = req[1]
 	atyp := req[3]
 
-	var host string
-	switch atyp {
-	case 1: // IPv4
-		var ip [4]byte
-		if _, err = io.ReadFull(conn, ip[:]); err != nil {
-			return
-		}
-		host = net.IP(ip[:]).String()
-	case 3: // Domain name
-		var l [1]byte
-		if _, err = io.ReadFull(conn, l[:]); err != nil {
-			return
-		}
-		domain := make([]byte, l[0])
-		if _, err = io.ReadFull(conn, domain); err != nil {
-			return
-		}
-		host = string(domain)
-	case 4: // IPv6
-		var ip [16]byte
-		if _, err = io.ReadFull(conn, ip[:]); err != nil {
-			return
-		}
-		host = net.IP(ip[:]).String()
-	default:
-		err = io.ErrUnexpectedEOF
+	host, err := readSOCKS5Host(conn, atyp)
+	if err != nil {
 		return
 	}
 
-	var portBuf [2]byte
-	if _, err = io.ReadFull(conn, portBuf[:]); err != nil {
+	port, err := readSOCKS5Port(conn)
+	if err != nil {
 		return
 	}
-	port := binary.BigEndian.Uint16(portBuf[:])
+
 	targetAddr = net.JoinHostPort(host, strconv.Itoa(int(port)))
 	return
+}
+
+func readSOCKS5Host(conn net.Conn, atyp byte) (string, error) {
+	switch atyp {
+	case 1: // IPv4
+		var ip [4]byte
+		if _, err := io.ReadFull(conn, ip[:]); err != nil {
+			return "", err
+		}
+		return net.IP(ip[:]).String(), nil
+	case 3: // Domain name
+		var l [1]byte
+		if _, err := io.ReadFull(conn, l[:]); err != nil {
+			return "", err
+		}
+		domain := make([]byte, l[0])
+		if _, err := io.ReadFull(conn, domain); err != nil {
+			return "", err
+		}
+		return string(domain), nil
+	case 4: // IPv6
+		var ip [16]byte
+		if _, err := io.ReadFull(conn, ip[:]); err != nil {
+			return "", err
+		}
+		return net.IP(ip[:]).String(), nil
+	default:
+		return "", io.ErrUnexpectedEOF
+	}
+}
+
+func readSOCKS5Port(conn net.Conn) (uint16, error) {
+	var portBuf [2]byte
+	if _, err := io.ReadFull(conn, portBuf[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint16(portBuf[:]), nil
 }
 
 func handleConnectCommand(ctx context.Context, conn net.Conn, targetAddr, clientAddr string, dialTCP func(context.Context, string) (net.Conn, error)) {
@@ -171,13 +208,13 @@ func handleConnectCommand(ctx context.Context, conn net.Conn, targetAddr, client
 	remote, err := dialTCP(ctx, targetAddr)
 	if err != nil {
 		common.LogError("socks5", "TCP Connect failed", "client", clientAddr, "target", targetAddr, "error", err)
-		_ = writeSOCKS5Error(conn, socks5ErrorGeneralFailure)
+		_ = writeSOCKS5Error(conn, replyGeneralFailure)
 		return
 	}
 	defer remote.Close()
 
 	// Success reply
-	_ = writeSOCKS5Success(conn)
+	_ = writeSOCKS5Success(conn, targetAddr)
 
 	// Delegate to ProxyBidi for telemetry
 	uproxy.ProxyBidi(ctx, conn, remote, "socks5_client_tcp", targetAddr, config.DefaultTCPBufSize)
@@ -188,7 +225,7 @@ func handleUDPAssociate(ctx context.Context, conn net.Conn, clientAddr string, d
 	udpAddr, udpCloser, err := dialUDP(ctx)
 	if err != nil {
 		common.LogError("socks5", "UDP Associate failed", "client", clientAddr, "error", err)
-		_ = writeSOCKS5Error(conn, socks5ErrorGeneralFailure)
+		_ = writeSOCKS5Error(conn, replyGeneralFailure)
 		return
 	}
 	defer udpCloser.Close()

@@ -104,28 +104,8 @@ func (d *Diagnostics) DiagnoseFailure(ctx context.Context) DiagnosticResult {
 	}
 
 	// Check if route changed
-	if d.lastGateway != "" && d.lastGateway != gateway {
-		d.logger.Info("Route change detected",
-			"old_gateway", d.lastGateway,
-			"new_gateway", gateway,
-			"old_src_ip", d.lastSrcIP,
-			"new_src_ip", srcIP)
-
-		d.lastGateway = gateway
-		d.lastSrcIP = srcIP
-
-		return DiagnosticResult{
-			FailureType: FailureRouteChanged,
-			Message:     fmt.Sprintf("gateway changed from %s to %s", d.lastGateway, gateway),
-			Gateway:     gateway,
-			Interface:   iface,
-		}
-	}
-
-	// Update last known good state
-	if d.lastGateway == "" {
-		d.lastGateway = gateway
-		d.lastSrcIP = srcIP
+	if changed, result := d.checkRouteChange(gateway, srcIP, iface); changed {
+		return result
 	}
 
 	// Check if interface is up
@@ -149,6 +129,39 @@ func (d *Diagnostics) DiagnoseFailure(ctx context.Context) DiagnosticResult {
 	return DiagnosticResult{
 		FailureType: FailureUnknown,
 		Message:     "connectivity lost but network appears normal",
+	}
+}
+
+// checkRouteChange detects if the route has changed and updates state accordingly
+func (d *Diagnostics) checkRouteChange(gateway, srcIP, iface string) (bool, DiagnosticResult) {
+	// First connection - initialize state
+	if d.lastGateway == "" {
+		d.lastGateway = gateway
+		d.lastSrcIP = srcIP
+		return false, DiagnosticResult{}
+	}
+
+	// No change detected
+	if d.lastGateway == gateway {
+		return false, DiagnosticResult{}
+	}
+
+	// Route changed
+	d.logger.Info("Route change detected",
+		"old_gateway", d.lastGateway,
+		"new_gateway", gateway,
+		"old_src_ip", d.lastSrcIP,
+		"new_src_ip", srcIP)
+
+	oldGateway := d.lastGateway
+	d.lastGateway = gateway
+	d.lastSrcIP = srcIP
+
+	return true, DiagnosticResult{
+		FailureType: FailureRouteChanged,
+		Message:     fmt.Sprintf("gateway changed from %s to %s", oldGateway, gateway),
+		Gateway:     gateway,
+		Interface:   iface,
 	}
 }
 

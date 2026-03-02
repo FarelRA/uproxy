@@ -520,7 +520,9 @@ func TestHandleSOCKS5Client(t *testing.T) {
 			return nil, nil, errors.New("should not be called")
 		}
 
-		handleSOCKS5Client(context.Background(), conn, dialTCP, dialUDP)
+		var clientWg sync.WaitGroup
+		clientWg.Add(1)
+		handleSOCKS5Client(context.Background(), conn, dialTCP, dialUDP, &clientWg)
 
 		// Check that unsupported command response was sent
 		resp := conn.WriteBuf.Bytes()
@@ -602,7 +604,9 @@ func TestSOCKS5_ConcurrentRequests(t *testing.T) {
 			conn := testutil.NewMockConn()
 			conn.ReadBuf = bytes.NewBuffer(data)
 
-			handleSOCKS5Client(context.Background(), conn, dialTCP, dialUDP)
+			var clientWg sync.WaitGroup
+			clientWg.Add(1)
+			handleSOCKS5Client(context.Background(), conn, dialTCP, dialUDP, &clientWg)
 		}()
 	}
 

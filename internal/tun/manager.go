@@ -1,6 +1,7 @@
 package tun
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -23,6 +24,9 @@ type TUNManager struct {
 	mu        sync.RWMutex
 	clients   map[string]*ClientRoute // Map: client IP → routing info
 	allocator *IPAllocator            // IP address allocator
+
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // ClientRoute holds routing information for a single client.
@@ -68,6 +72,7 @@ func NewTUNManager(cfg *Config, outbound string, autoRoute bool) (*TUNManager, e
 	// Create IP allocator
 	allocator := NewIPAllocator(cfg.IP, cfg.Netmask, cfg.IPv6)
 
+	ctx, cancel := context.WithCancel(context.Background())
 	mgr := &TUNManager{
 		device:    device,
 		config:    cfg,
@@ -75,9 +80,11 @@ func NewTUNManager(cfg *Config, outbound string, autoRoute bool) (*TUNManager, e
 		autoRoute: autoRoute,
 		clients:   make(map[string]*ClientRoute),
 		allocator: allocator,
+		ctx:       ctx,
+		cancel:    cancel,
 	}
 
-	// Start packet dispatcher
+	// Start packet dispatcher with context
 	go mgr.dispatchPackets()
 
 	slog.Info("TUN manager initialized", "device", cfg.Name, "ip", cfg.IP, "ipv6", cfg.IPv6)
@@ -87,6 +94,33 @@ func NewTUNManager(cfg *Config, outbound string, autoRoute bool) (*TUNManager, e
 // AllocateIP assigns IP addresses (IPv4 and optionally IPv6) to a new client
 func (m *TUNManager) AllocateIP() (ipv4 string, ipv6 string, err error) {
 	return m.allocator.AllocateIP()
+}
+
+// AllocateAndNotifyClient allocates IPs, notifies the client, and registers them.
+// This is a convenience method that combines AllocateIP, notification, and RegisterClient.
+func (m *TUNManager) AllocateAndNotifyClient(channel ssh.Channel) (*ClientRoute, string, string, error) {
+	// Allocate IPs for this client
+	clientIPv4, clientIPv6, err := m.AllocateIP()
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to allocate IP: %w", err)
+	}
+
+	slog.Info("IPs allocated for client", "ipv4", clientIPv4, "ipv6", clientIPv6)
+
+	// Send assigned IPs to client
+	ipMsg := fmt.Sprintf("IPv4:%s\n", clientIPv4)
+	if clientIPv6 != "" {
+		ipMsg += fmt.Sprintf("IPv6:%s\n", clientIPv6)
+	}
+	if _, err := channel.Write([]byte(ipMsg)); err != nil {
+		// Release the allocated IPs since we failed to notify
+		m.allocator.ReleaseIP(clientIPv4, clientIPv6)
+		return nil, "", "", fmt.Errorf("failed to send IPs to client: %w", err)
+	}
+
+	// Register client with manager
+	route := m.RegisterClient(clientIPv4, clientIPv6, channel)
+	return route, clientIPv4, clientIPv6, nil
 }
 
 // RegisterClient registers a client with its assigned IPs and channel.
@@ -159,10 +193,22 @@ func (m *TUNManager) dispatchPackets() {
 	buf := make([]byte, 2048)
 
 	for {
+		select {
+		case <-m.ctx.Done():
+			slog.Info("Packet dispatcher shutting down")
+			return
+		default:
+		}
+
 		n, err := m.device.Read(buf)
 		if err != nil {
-			slog.Error("TUN read error", "error", err)
-			return
+			select {
+			case <-m.ctx.Done():
+				return
+			default:
+				slog.Error("TUN read error", "error", err)
+				return
+			}
 		}
 
 		if n < 20 {
@@ -208,6 +254,9 @@ func (m *TUNManager) WritePacket(packet []byte) error {
 
 // Close shuts down the TUN manager and cleans up resources.
 func (m *TUNManager) Close() error {
+	// Cancel context to stop dispatcher goroutine
+	m.cancel()
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

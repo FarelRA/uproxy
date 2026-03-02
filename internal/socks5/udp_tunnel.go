@@ -56,6 +56,7 @@ type udpSessionManager struct {
 	clientAddr *net.UDPAddr           // Client's UDP address for sending responses
 	sshClient  *ssh.Client            // SSH client for creating new channels
 	conn       *net.UDPConn           // Local UDP socket for client communication
+	wg         sync.WaitGroup         // Tracks active session goroutines
 }
 
 func newUDPSessionManager(sshClient *ssh.Client, conn *net.UDPConn) *udpSessionManager {
@@ -98,6 +99,7 @@ func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) 
 	m.sessions[targetStr] = ch
 	m.mu.Unlock()
 
+	m.wg.Add(1)
 	go m.handleSessionResponses(targetStr, ch, header)
 
 	return ch, nil
@@ -107,6 +109,7 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 	start := time.Now()
 	var txBytes, rxBytes int64
 	defer func() {
+		m.wg.Done()
 		ch.Close()
 		m.mu.Lock()
 		delete(m.sessions, target)
@@ -136,6 +139,18 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 			}
 		}
 	}
+}
+
+// udpCloser wraps the UDP connection and waits for all session goroutines to complete
+type udpCloser struct {
+	conn       *net.UDPConn
+	sessionMgr *udpSessionManager
+}
+
+func (c *udpCloser) Close() error {
+	err := c.conn.Close()
+	c.sessionMgr.wg.Wait()
+	return err
 }
 
 // DialUDP runs on the client side. It binds a local UDP socket and pipes SOCKS5 UDP frames into SSH channels.
@@ -187,7 +202,7 @@ func DialUDP(ctx context.Context, sshClient *ssh.Client, listenIP string) (net.A
 		}
 	}()
 
-	return conn.LocalAddr(), conn, nil
+	return conn.LocalAddr(), &udpCloser{conn: conn, sessionMgr: sessionMgr}, nil
 }
 
 // createUDPDialer creates a net.Dialer configured for UDP with optional interface binding.

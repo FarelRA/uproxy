@@ -275,29 +275,16 @@ func openTUNChannel(client *ssh.Client) (ssh.Channel, error) {
 func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 	defer channel.Close()
 
-	// Allocate IPs for this client (IPv4 and optionally IPv6)
-	clientIPv4, clientIPv6, err := manager.AllocateIP()
+	// Allocate IPs, notify client, and register
+	route, clientIPv4, clientIPv6, err := manager.AllocateAndNotifyClient(channel)
 	if err != nil {
-		slog.Error("Failed to allocate IP for client", "error", err)
-		channel.Write([]byte("ERROR: No available IPs\n"))
+		slog.Error("Failed to setup client", "error", err)
+		channel.Write([]byte(fmt.Sprintf("ERROR: %v\n", err)))
 		return
 	}
+	defer manager.UnregisterClient(clientIPv4, clientIPv6)
 
 	slog.Info("TUN channel opened", "client_ipv4", clientIPv4, "client_ipv6", clientIPv6)
-
-	// Send assigned IPs to client
-	ipMsg := fmt.Sprintf("IPv4:%s\n", clientIPv4)
-	if clientIPv6 != "" {
-		ipMsg += fmt.Sprintf("IPv6:%s\n", clientIPv6)
-	}
-	if _, err := channel.Write([]byte(ipMsg)); err != nil {
-		slog.Error("Failed to send IPs to client", "error", err)
-		return
-	}
-
-	// Register client with manager
-	route := manager.RegisterClient(clientIPv4, clientIPv6, channel)
-	defer manager.UnregisterClient(clientIPv4, clientIPv6)
 
 	// Statistics
 	var txPackets, rxPackets, txBytes, rxBytes atomic.Int64
