@@ -64,16 +64,16 @@ func TestDiagnostics_RouteChangeDetection(t *testing.T) {
 	diag := NewDiagnostics("example.com:443", logger)
 
 	// Set initial state
-	diag.lastGateway = "192.168.1.1"
-	diag.lastSrcIP = "192.168.1.100"
+	diag.lastRoute.gateway = "192.168.1.1"
+	diag.lastRoute.srcIP = "192.168.1.100"
 
 	// Simulate route change by directly testing the logic
 	newGateway := "192.168.2.1"
 
-	if diag.lastGateway != "" && diag.lastGateway != newGateway {
+	if diag.lastRoute.gateway != "" && diag.lastRoute.gateway != newGateway {
 		// This is the route change detection logic
-		if diag.lastGateway != "192.168.1.1" {
-			t.Errorf("lastGateway = %v, want 192.168.1.1", diag.lastGateway)
+		if diag.lastRoute.gateway != "192.168.1.1" {
+			t.Errorf("lastRoute.gateway = %v, want 192.168.1.1", diag.lastRoute.gateway)
 		}
 	}
 }
@@ -83,20 +83,20 @@ func TestDiagnostics_StateManagement(t *testing.T) {
 	diag := NewDiagnostics("example.com:443", logger)
 
 	// Initially empty
-	if diag.lastGateway != "" {
-		t.Errorf("Initial lastGateway should be empty, got %v", diag.lastGateway)
+	if diag.lastRoute.gateway != "" {
+		t.Errorf("Initial lastRoute.gateway should be empty, got %v", diag.lastRoute.gateway)
 	}
 
 	// Update state
-	diag.lastGateway = "192.168.1.1"
-	diag.lastSrcIP = "192.168.1.100"
+	diag.lastRoute.gateway = "192.168.1.1"
+	diag.lastRoute.srcIP = "192.168.1.100"
 
-	if diag.lastGateway != "192.168.1.1" {
-		t.Errorf("lastGateway = %v, want 192.168.1.1", diag.lastGateway)
+	if diag.lastRoute.gateway != "192.168.1.1" {
+		t.Errorf("lastRoute.gateway = %v, want 192.168.1.1", diag.lastRoute.gateway)
 	}
 
-	if diag.lastSrcIP != "192.168.1.100" {
-		t.Errorf("lastSrcIP = %v, want 192.168.1.100", diag.lastSrcIP)
+	if diag.lastRoute.srcIP != "192.168.1.100" {
+		t.Errorf("lastRoute.srcIP = %v, want 192.168.1.100", diag.lastRoute.srcIP)
 	}
 }
 
