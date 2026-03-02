@@ -385,6 +385,15 @@ func startSOCKS5Server(ctx context.Context, listenAddr string, getClient func() 
 	slog.Info("SOCKS5 TCP/UDP proxy listening", "layer", layer, "addr", listenAddr)
 }
 
+// shouldFallbackToSOCKS5 checks if the error indicates the server doesn't support TUN mode
+func shouldFallbackToSOCKS5(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "channel type") && strings.Contains(errStr, "not supported")
+}
+
 // startTUNTunnel starts the TUN tunnel with fallback to SOCKS5
 func runTUNLoop(ctx context.Context, connMgr *connectionManager, tunCfg *tun.Config, routes string, autoRoute bool, serverAddr string, fallbackCh chan<- struct{}) {
 	tunFailed := false
@@ -399,7 +408,7 @@ func runTUNLoop(ctx context.Context, connMgr *connectionManager, tunCfg *tun.Con
 		err := tun.ServeTUN(ctx, client, tunCfg, routes, autoRoute, serverAddr)
 		if err != nil {
 			// Check if server doesn't support TUN mode
-			if strings.Contains(err.Error(), "channel type") && strings.Contains(err.Error(), "not supported") {
+			if shouldFallbackToSOCKS5(err) {
 				if !tunFailed {
 					slog.Warn("Server does not support TUN mode, falling back to SOCKS5...")
 					tunFailed = true

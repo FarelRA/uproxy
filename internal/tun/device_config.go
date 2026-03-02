@@ -57,11 +57,19 @@ func configureTUN(name string, cfg *Config) error {
 	}
 }
 
+// runCommand executes a command and returns an error with the output if it fails
+func runCommand(cmd *exec.Cmd, errMsg string) error {
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s: %w, output: %s", errMsg, err, output)
+	}
+	return nil
+}
+
 func configureLinux(name string, cfg *Config) error {
 	// Set IPv4 address
 	cmd := exec.Command("ip", "addr", "add", fmt.Sprintf("%s/%s", cfg.IP, cidrFromNetmask(cfg.Netmask)), "dev", name)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set IP address: %w, output: %s", err, output)
+	if err := runCommand(cmd, "failed to set IP address"); err != nil {
+		return err
 	}
 
 	// Set IPv6 address if provided
@@ -76,14 +84,14 @@ func configureLinux(name string, cfg *Config) error {
 
 	// Set MTU
 	cmd = exec.Command("ip", "link", "set", "dev", name, "mtu", fmt.Sprintf("%d", cfg.MTU))
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to set MTU: %w, output: %s", err, output)
+	if err := runCommand(cmd, "failed to set MTU"); err != nil {
+		return err
 	}
 
 	// Bring interface up
 	cmd = exec.Command("ip", "link", "set", "dev", name, "up")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to bring interface up: %w, output: %s", err, output)
+	if err := runCommand(cmd, "failed to bring interface up"); err != nil {
+		return err
 	}
 
 	slog.Info("TUN interface configured", "name", name, "ip", cfg.IP, "mtu", cfg.MTU)

@@ -26,33 +26,17 @@ func parseSOCKS5UDPHeader(data []byte) (target string, payload []byte, header []
 	}
 	atyp := data[3]
 	idx := 4
-	var host string
 
-	switch atyp {
-	case 1:
-		if len(data) < idx+4+2 {
-			return "", nil, nil, io.ErrUnexpectedEOF
-		}
-		host = net.IP(data[idx : idx+4]).String()
-		idx += 4
-	case 3:
-		l := int(data[idx])
-		idx++
-		if len(data) < idx+l+2 {
-			return "", nil, nil, io.ErrUnexpectedEOF
-		}
-		host = string(data[idx : idx+l])
-		idx += l
-	case 4:
-		if len(data) < idx+16+2 {
-			return "", nil, nil, io.ErrUnexpectedEOF
-		}
-		host = net.IP(data[idx : idx+16]).String()
-		idx += 16
-	default:
-		return "", nil, nil, net.InvalidAddrError("invalid atyp")
+	// Use common address parsing function
+	host, newIdx, err := parseSOCKS5Address(data, atyp, idx)
+	if err != nil {
+		return "", nil, nil, err
 	}
+	idx = newIdx
 
+	if len(data) < idx+2 {
+		return "", nil, nil, io.ErrUnexpectedEOF
+	}
 	port := binary.BigEndian.Uint16(data[idx : idx+2])
 	idx += 2
 
