@@ -8,6 +8,42 @@ import (
 	"strings"
 )
 
+// executeIPTablesRule executes an iptables command with the given arguments
+// Returns error only if critical is true, otherwise logs warning
+func executeIPTablesRule(cmd string, args []string, description string, critical bool) error {
+	command := exec.Command(cmd, args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		if critical {
+			return fmt.Errorf("failed to %s: %w, output: %s", description, err, output)
+		}
+		slog.Warn(fmt.Sprintf("Failed to %s", description), "error", err, "output", string(output))
+	} else {
+		slog.Info(description)
+	}
+	return nil
+}
+
+// addIPTablesRule adds an IPv4 iptables rule
+func addIPTablesRule(args []string, description string, critical bool) error {
+	return executeIPTablesRule("iptables", args, description, critical)
+}
+
+// addIP6TablesRule adds an IPv6 ip6tables rule
+func addIP6TablesRule(args []string, description string, critical bool) error {
+	return executeIPTablesRule("ip6tables", args, description, critical)
+}
+
+// deleteIPTablesRule deletes an IPv4 iptables rule
+func deleteIPTablesRule(args []string, description string) {
+	executeIPTablesRule("iptables", args, description, false)
+}
+
+// deleteIP6TablesRule deletes an IPv6 ip6tables rule
+func deleteIP6TablesRule(args []string, description string) {
+	executeIPTablesRule("ip6tables", args, description, false)
+}
+
 // EnableIPForwarding enables IP forwarding in the kernel
 func EnableIPForwarding() error {
 	if runtime.GOOS != "linux" {
@@ -45,44 +81,49 @@ func EnableNAT(tunIface, outboundIface, ipv4Subnet, ipv6Subnet string) error {
 
 	// IPv4 NAT rules - only masquerade traffic from TUN subnet
 	if ipv4Subnet != "" {
-		cmd := exec.Command("iptables", "-t", "nat", "-A", "POSTROUTING", "-s", ipv4Subnet, "-o", outboundIface, "-j", "MASQUERADE")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("failed to enable IPv4 NAT: %w, output: %s", err, output)
+		if err := addIPTablesRule(
+			[]string{"-t", "nat", "-A", "POSTROUTING", "-s", ipv4Subnet, "-o", outboundIface, "-j", "MASQUERADE"},
+			fmt.Sprintf("enable IPv4 NAT for %s via %s", ipv4Subnet, outboundIface),
+			true,
+		); err != nil {
+			return err
 		}
-		slog.Info("IPv4 NAT enabled", "subnet", ipv4Subnet, "outbound", outboundIface)
 
 		// Allow forwarding from TUN to outbound interface (insert at beginning to bypass REJECT rules)
-		cmd = exec.Command("iptables", "-I", "FORWARD", "1", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			slog.Warn("Failed to add IPv4 forward rule", "error", err, "output", string(output))
-		}
+		addIPTablesRule(
+			[]string{"-I", "FORWARD", "1", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT"},
+			"add IPv4 forward rule",
+			false,
+		)
 
 		// Allow forwarding from outbound to TUN interface (return traffic)
-		cmd = exec.Command("iptables", "-I", "FORWARD", "2", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			slog.Warn("Failed to add IPv4 return forward rule", "error", err, "output", string(output))
-		}
+		addIPTablesRule(
+			[]string{"-I", "FORWARD", "2", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+			"add IPv4 return forward rule",
+			false,
+		)
 	}
 
 	// IPv6 NAT rules - only masquerade traffic from TUN subnet
 	if ipv6Subnet != "" {
-		cmd := exec.Command("ip6tables", "-t", "nat", "-A", "POSTROUTING", "-s", ipv6Subnet, "-o", outboundIface, "-j", "MASQUERADE")
-		if output, err := cmd.CombinedOutput(); err != nil {
-			slog.Warn("Failed to enable IPv6 NAT", "error", err, "output", string(output))
-		} else {
-			slog.Info("IPv6 NAT enabled", "subnet", ipv6Subnet, "outbound", outboundIface)
-
+		if err := addIP6TablesRule(
+			[]string{"-t", "nat", "-A", "POSTROUTING", "-s", ipv6Subnet, "-o", outboundIface, "-j", "MASQUERADE"},
+			fmt.Sprintf("enable IPv6 NAT for %s via %s", ipv6Subnet, outboundIface),
+			false,
+		); err == nil {
 			// Allow IPv6 forwarding from TUN to outbound interface (insert at beginning to bypass REJECT rules)
-			cmd = exec.Command("ip6tables", "-I", "FORWARD", "1", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT")
-			if output, err := cmd.CombinedOutput(); err != nil {
-				slog.Warn("Failed to add IPv6 forward rule", "error", err, "output", string(output))
-			}
+			addIP6TablesRule(
+				[]string{"-I", "FORWARD", "1", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT"},
+				"add IPv6 forward rule",
+				false,
+			)
 
 			// Allow IPv6 forwarding from outbound to TUN interface (return traffic)
-			cmd = exec.Command("ip6tables", "-I", "FORWARD", "2", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT")
-			if output, err := cmd.CombinedOutput(); err != nil {
-				slog.Warn("Failed to add IPv6 return forward rule", "error", err, "output", string(output))
-			}
+			addIP6TablesRule(
+				[]string{"-I", "FORWARD", "2", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+				"add IPv6 return forward rule",
+				false,
+			)
 		}
 	}
 
@@ -107,31 +148,37 @@ func DisableNAT(tunIface, outboundIface, ipv4Subnet, ipv6Subnet string) {
 
 	// Remove IPv4 iptables rules (must match exactly what EnableNAT created)
 	if ipv4Subnet != "" {
-		if err := exec.Command("iptables", "-t", "nat", "-D", "POSTROUTING", "-s", ipv4Subnet, "-o", outboundIface, "-j", "MASQUERADE").Run(); err != nil {
-			slog.Debug("Failed to remove IPv4 NAT rule", "error", err)
-		}
+		deleteIPTablesRule(
+			[]string{"-t", "nat", "-D", "POSTROUTING", "-s", ipv4Subnet, "-o", outboundIface, "-j", "MASQUERADE"},
+			"remove IPv4 NAT rule",
+		)
 	}
-	if err := exec.Command("iptables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run(); err != nil {
-		slog.Debug("Failed to remove IPv4 forward rule", "error", err)
-	}
-	if err := exec.Command("iptables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run(); err != nil {
-		slog.Debug("Failed to remove IPv4 established rule", "error", err)
-	}
+	deleteIPTablesRule(
+		[]string{"-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT"},
+		"remove IPv4 forward rule",
+	)
+	deleteIPTablesRule(
+		[]string{"-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+		"remove IPv4 return forward rule",
+	)
 
-	// Remove IPv6 ip6tables rules (must match exactly what EnableNAT created)
+	// Remove IPv6 iptables rules
 	if ipv6Subnet != "" {
-		if err := exec.Command("ip6tables", "-t", "nat", "-D", "POSTROUTING", "-s", ipv6Subnet, "-o", outboundIface, "-j", "MASQUERADE").Run(); err != nil {
-			slog.Debug("Failed to remove IPv6 NAT rule", "error", err)
-		}
+		deleteIP6TablesRule(
+			[]string{"-t", "nat", "-D", "POSTROUTING", "-s", ipv6Subnet, "-o", outboundIface, "-j", "MASQUERADE"},
+			"remove IPv6 NAT rule",
+		)
 	}
-	if err := exec.Command("ip6tables", "-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT").Run(); err != nil {
-		slog.Debug("Failed to remove IPv6 forward rule", "error", err)
-	}
-	if err := exec.Command("ip6tables", "-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT").Run(); err != nil {
-		slog.Debug("Failed to remove IPv6 established rule", "error", err)
-	}
+	deleteIP6TablesRule(
+		[]string{"-D", "FORWARD", "-i", tunIface, "-o", outboundIface, "-j", "ACCEPT"},
+		"remove IPv6 forward rule",
+	)
+	deleteIP6TablesRule(
+		[]string{"-D", "FORWARD", "-i", outboundIface, "-o", tunIface, "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT"},
+		"remove IPv6 return forward rule",
+	)
 
-	slog.Info("NAT disabled and rules cleaned up", "tun", tunIface, "outbound", outboundIface, "ipv4_subnet", ipv4Subnet, "ipv6_subnet", ipv6Subnet)
+	slog.Info("NAT disabled", "tun", tunIface, "outbound", outboundIface)
 }
 
 // getDefaultInterface returns the default network interface

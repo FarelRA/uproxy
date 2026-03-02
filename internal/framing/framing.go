@@ -8,6 +8,8 @@ import (
 
 // WriteFramed writes a length-prefixed byte slice to the writer.
 // The length is encoded as a 2-byte big-endian uint16, limiting data to 65535 bytes.
+// Callers must ensure data length does not exceed this limit before calling.
+// Returns an error if data exceeds the maximum frame size.
 func WriteFramed(w io.Writer, data []byte) error {
 	if len(data) > 65535 {
 		return fmt.Errorf("data too large: %d bytes (max 65535)", len(data))

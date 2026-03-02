@@ -27,10 +27,14 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 	var txBytes, rxBytes int64
 
 	g, gctx := errgroup.WithContext(ctx)
-	_ = gctx // Context available for future use
 
 	// Stream: A -> B
 	g.Go(func() error {
+		select {
+		case <-gctx.Done():
+			return gctx.Err()
+		default:
+		}
 		buf := make([]byte, bufSize)
 		n, err := io.CopyBuffer(a, b, buf)
 		txBytes = n
@@ -43,6 +47,11 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 
 	// Stream: B -> A
 	g.Go(func() error {
+		select {
+		case <-gctx.Done():
+			return gctx.Err()
+		default:
+		}
 		buf := make([]byte, bufSize)
 		n, err := io.CopyBuffer(b, a, buf)
 		rxBytes = n

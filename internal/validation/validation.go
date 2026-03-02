@@ -10,32 +10,44 @@ import (
 	"uproxy/internal/uproxy"
 )
 
-// ValidateIPv4Packet validates an IPv4 packet structure
-func ValidateIPv4Packet(packet []byte) bool {
+// validateIPv4HeaderLength checks if the IPv4 header length is valid
+func validateIPv4HeaderLength(packet []byte) (int, bool) {
 	if len(packet) < 20 {
-		return false
+		return 0, false
 	}
 
 	// Check IHL (Internet Header Length) - minimum is 5 (20 bytes)
 	ihl := int(packet[0] & 0x0F)
 	if ihl < 5 {
-		return false
+		return 0, false
 	}
 
 	headerLen := ihl * 4
 	if len(packet) < headerLen {
+		return 0, false
+	}
+
+	return headerLen, true
+}
+
+// validateIPv4TotalLength checks if the total length field is valid
+func validateIPv4TotalLength(packet []byte, headerLen int) bool {
+	if len(packet) < 4 {
+		return true // Not enough data to validate, but header was valid
+	}
+
+	totalLen := int(packet[2])<<8 | int(packet[3])
+	return totalLen >= headerLen && totalLen <= len(packet)
+}
+
+// ValidateIPv4Packet validates an IPv4 packet structure
+func ValidateIPv4Packet(packet []byte) bool {
+	headerLen, valid := validateIPv4HeaderLength(packet)
+	if !valid {
 		return false
 	}
 
-	// Validate total length field
-	if len(packet) >= 4 {
-		totalLen := int(packet[2])<<8 | int(packet[3])
-		if totalLen < headerLen || totalLen > len(packet) {
-			return false
-		}
-	}
-
-	return true
+	return validateIPv4TotalLength(packet, headerLen)
 }
 
 // ValidateIPv6Packet validates an IPv6 packet structure

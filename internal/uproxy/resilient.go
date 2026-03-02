@@ -69,6 +69,42 @@ func (r *ResilientPacketConn) SetFailureHandler(serverAddr string, handler Failu
 	r.failureHandler = handler
 }
 
+// runDiagnostics performs failure diagnostics and attempts to handle the issue
+// Returns true if the failure was handled by a custom handler
+func (r *ResilientPacketConn) runDiagnostics(diagnostics *network.Diagnostics, handler FailureHandler) bool {
+	if diagnostics == nil {
+		slog.Warn("Network interface drop detected. Attempting to rebind socket...", "layer", "resilient")
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	result := diagnostics.DiagnoseFailure(ctx)
+	cancel()
+
+	slog.Warn("Connectivity failure detected",
+		"layer", "resilient",
+		"failure_type", result.FailureType.String(),
+		"message", result.Message)
+
+	// Let the failure handler attempt to fix the issue
+	if handler != nil {
+		return handler(result)
+	}
+	return false
+}
+
+// scheduleReconnect starts a goroutine to perform reconnection
+func (r *ResilientPacketConn) scheduleReconnect() {
+	go func() {
+		defer func() {
+			r.mu.Lock()
+			r.reconnecting = false
+			r.mu.Unlock()
+		}()
+		r.reconnectSync()
+	}()
+}
+
 func (r *ResilientPacketConn) triggerReconnect() {
 	r.mu.Lock()
 	if r.reconnecting || r.closed {
@@ -82,36 +118,12 @@ func (r *ResilientPacketConn) triggerReconnect() {
 
 	r.telemetry.RecordDrop()
 
-	// Diagnose the failure if diagnostics are available
-	var handled bool
-	if diagnostics != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		result := diagnostics.DiagnoseFailure(ctx)
-		cancel()
-
-		slog.Warn("Connectivity failure detected",
-			"layer", "resilient",
-			"failure_type", result.FailureType.String(),
-			"message", result.Message)
-
-		// Let the failure handler attempt to fix the issue
-		if handler != nil {
-			handled = handler(result)
-		}
-	} else {
-		slog.Warn("Network interface drop detected. Attempting to rebind socket...", "layer", "resilient")
-	}
+	// Diagnose the failure and attempt to handle it
+	handled := r.runDiagnostics(diagnostics, handler)
 
 	// If not handled by custom handler, do default rebind
 	if !handled {
-		go func() {
-			defer func() {
-				r.mu.Lock()
-				r.reconnecting = false
-				r.mu.Unlock()
-			}()
-			r.reconnectSync()
-		}()
+		r.scheduleReconnect()
 	} else {
 		r.mu.Lock()
 		r.reconnecting = false
@@ -169,23 +181,42 @@ func (r *ResilientPacketConn) getConn() *net.UDPConn {
 	return r.conn
 }
 
-func (r *ResilientPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+// waitForConnection blocks until a connection is available or the conn is closed
+func (r *ResilientPacketConn) waitForConnection() (*net.UDPConn, error) {
 	for {
 		c := r.getConn()
-		if c == nil {
-			if r.isClosed() {
-				return 0, nil, net.ErrClosed
-			}
-			time.Sleep(100 * time.Millisecond)
-			continue
+		if c != nil {
+			return c, nil
+		}
+		if r.isClosed() {
+			return nil, net.ErrClosed
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// shouldRetryError determines if an error should trigger a reconnect and retry
+func (r *ResilientPacketConn) shouldRetryError(err error) bool {
+	if r.isClosed() {
+		return false
+	}
+	// Don't retry on timeout errors - return them to caller
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return false
+	}
+	return true
+}
+
+func (r *ResilientPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	for {
+		c, err := r.waitForConnection()
+		if err != nil {
+			return 0, nil, err
 		}
 
 		n, addr, err := c.ReadFrom(p)
 		if err != nil {
-			if r.isClosed() {
-				return 0, nil, net.ErrClosed
-			}
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			if !r.shouldRetryError(err) {
 				return 0, nil, err
 			}
 			r.triggerReconnect()

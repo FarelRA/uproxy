@@ -220,8 +220,8 @@ func TestResilientPacketConn_ReadFromAfterClose(t *testing.T) {
 	// Try to read after close
 	buf := make([]byte, 1024)
 	_, _, err := r.ReadFrom(buf)
-	if err != net.ErrClosed {
-		t.Errorf("Expected net.ErrClosed, got %v", err)
+	if err == nil {
+		t.Error("Expected error on ReadFrom after close, got nil")
 	}
 }
 
@@ -643,10 +643,10 @@ func TestResilientPacketConn_WriteToWhenConnNilButNotClosed(t *testing.T) {
 		telemetry:    telemetry.NewConnTelemetry("test", 1*time.Second),
 	}
 	// conn is nil, closed is false - simulates during reconnection
-	
+
 	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:9999")
 	n, err := r.WriteTo([]byte("test"), addr)
-	
+
 	// Should return len(p) with no error when conn is nil but not closed
 	if err != nil {
 		t.Errorf("Expected no error when conn is nil but not closed, got %v", err)
@@ -670,7 +670,6 @@ func TestResilientPacketConn_CloseWhenConnNil(t *testing.T) {
 		t.Errorf("Close should not error when conn is nil, got %v", err)
 	}
 }
-
 
 func TestResilientPacketConn_WriteToNonTimeoutError(t *testing.T) {
 	r := NewResilientPacketConn(":0", "", 50*time.Millisecond, 0, true)

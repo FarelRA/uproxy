@@ -423,7 +423,6 @@ func TestCheckAuthorizedKeys_UserHomeDirError(t *testing.T) {
 	}
 }
 
-
 func TestPromptAndAddKnownHost_UserAccepts(t *testing.T) {
 	tmpDir := t.TempDir()
 	khPath := filepath.Join(tmpDir, "known_hosts")

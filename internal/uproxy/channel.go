@@ -35,16 +35,22 @@ func (c *ChannelConn) RemoteAddr() net.Addr {
 }
 
 // SetDeadline is a no-op as SSH channels do not natively support IO deadlines.
+// The underlying SSH protocol handles timeouts at the transport layer.
+// This method exists to satisfy the net.Conn interface.
 func (c *ChannelConn) SetDeadline(t time.Time) error {
 	return nil
 }
 
 // SetReadDeadline is a no-op for SSH channels.
+// The underlying SSH protocol handles timeouts at the transport layer.
+// This method exists to satisfy the net.Conn interface.
 func (c *ChannelConn) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
 // SetWriteDeadline is a no-op for SSH channels.
+// The underlying SSH protocol handles timeouts at the transport layer.
+// This method exists to satisfy the net.Conn interface.
 func (c *ChannelConn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
