@@ -82,11 +82,10 @@ func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) 
 		return channel, nil
 	}
 
-	ch, reqs, err := m.sshClient.OpenChannel(ChannelTypeUDP, nil)
+	ch, err := uproxy.OpenSSHChannel(m.sshClient, ChannelTypeUDP)
 	if err != nil {
 		return nil, err
 	}
-	go ssh.DiscardRequests(reqs)
 
 	if err := WriteTargetHeader(ch, targetStr); err != nil {
 		ch.Close()

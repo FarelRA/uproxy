@@ -12,6 +12,7 @@ import (
 	"github.com/songgao/water"
 	"golang.org/x/crypto/ssh"
 	"uproxy/internal/framing"
+	"uproxy/internal/uproxy"
 )
 
 const (
@@ -255,18 +256,15 @@ func readServerAssignedIPs(channel ssh.Channel) (ipv4 string, ipv6 string, err e
 
 // openTUNChannel opens an SSH channel for TUN traffic
 func openTUNChannel(client *ssh.Client) (ssh.Channel, error) {
-	channel, reqs, err := client.OpenChannel(ChannelTypeTUN, nil)
+	channel, err := uproxy.OpenSSHChannel(client, ChannelTypeTUN)
 	if err != nil {
 		// Check if the error is due to unknown channel type (server doesn't support TUN)
 		if strings.Contains(err.Error(), "unknown channel type") ||
 			strings.Contains(err.Error(), "rejected") {
 			return nil, ErrTUNNotSupported
 		}
-		return nil, fmt.Errorf("failed to open channel: %w", err)
+		return nil, err
 	}
-
-	// Discard requests
-	go ssh.DiscardRequests(reqs)
 
 	return channel, nil
 }
