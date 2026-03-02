@@ -393,39 +393,64 @@ func shouldFallbackToSOCKS5(err error) bool {
 }
 
 // startTUNTunnel starts the TUN tunnel with fallback to SOCKS5
+func waitForSSHClient(connMgr *connectionManager) *ssh.Client {
+	for {
+		client := connMgr.getSSHClient()
+		if client != nil {
+			return client
+		}
+		slog.Warn("Waiting for SSH connection before starting TUN...")
+		time.Sleep(1 * time.Second)
+	}
+}
+
+func handleTUNError(err error, tunFailed bool, fallbackCh chan<- struct{}) (shouldReturn bool, newTunFailed bool) {
+	if err == nil {
+		return false, tunFailed
+	}
+
+	// Check if server doesn't support TUN mode
+	if shouldFallbackToSOCKS5(err) {
+		if !tunFailed {
+			slog.Warn("Server does not support TUN mode, falling back to SOCKS5...")
+			tunFailed = true
+			select {
+			case fallbackCh <- struct{}{}:
+			default:
+			}
+		}
+		return true, tunFailed
+	}
+
+	slog.Error("TUN tunnel stopped", "error", err)
+	return false, tunFailed
+}
+
+func shouldRestartTUN(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	default:
+		slog.Info("Restarting TUN tunnel...", "delay", config.DefaultReconnectRetryWait)
+		time.Sleep(config.DefaultReconnectRetryWait)
+		return true
+	}
+}
+
 func runTUNLoop(ctx context.Context, connMgr *connectionManager, tunCfg *tun.Config, routes string, autoRoute bool, serverAddr string, fallbackCh chan<- struct{}) {
 	tunFailed := false
 	for {
-		client := connMgr.getSSHClient()
-		if client == nil {
-			slog.Warn("Waiting for SSH connection before starting TUN...")
-			time.Sleep(1 * time.Second)
-			continue
-		}
-
+		client := waitForSSHClient(connMgr)
 		err := tun.ServeTUN(ctx, client, tunCfg, routes, autoRoute, serverAddr)
-		if err != nil {
-			// Check if server doesn't support TUN mode
-			if shouldFallbackToSOCKS5(err) {
-				if !tunFailed {
-					slog.Warn("Server does not support TUN mode, falling back to SOCKS5...")
-					tunFailed = true
-					select {
-					case fallbackCh <- struct{}{}:
-					default:
-					}
-				}
-				return
-			}
-			slog.Error("TUN tunnel stopped", "error", err)
+
+		shouldReturn, newTunFailed := handleTUNError(err, tunFailed, fallbackCh)
+		tunFailed = newTunFailed
+		if shouldReturn {
+			return
 		}
 
-		select {
-		case <-ctx.Done():
+		if !shouldRestartTUN(ctx) {
 			return
-		default:
-			slog.Info("Restarting TUN tunnel...", "delay", config.DefaultReconnectRetryWait)
-			time.Sleep(config.DefaultReconnectRetryWait)
 		}
 	}
 }
