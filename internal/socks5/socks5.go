@@ -3,6 +3,7 @@ package socks5
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -166,33 +167,52 @@ func parseSOCKS5Request(conn net.Conn) (cmd byte, targetAddr string, err error) 
 	return
 }
 
-func readSOCKS5Host(conn net.Conn, atyp byte) (string, error) {
-	switch atyp {
-	case 1: // IPv4
-		var ip [4]byte
-		if _, err := io.ReadFull(conn, ip[:]); err != nil {
-			return "", err
-		}
-		return net.IP(ip[:]).String(), nil
-	case 3: // Domain name
-		var l [1]byte
-		if _, err := io.ReadFull(conn, l[:]); err != nil {
-			return "", err
-		}
-		domain := make([]byte, l[0])
-		if _, err := io.ReadFull(conn, domain); err != nil {
-			return "", err
-		}
-		return string(domain), nil
-	case 4: // IPv6
-		var ip [16]byte
-		if _, err := io.ReadFull(conn, ip[:]); err != nil {
-			return "", err
-		}
-		return net.IP(ip[:]).String(), nil
-	default:
-		return "", io.ErrUnexpectedEOF
+// addressTypeReader defines how to read each SOCKS5 address type
+type addressTypeReader struct {
+	name string
+	read func(net.Conn) (string, error)
+}
+
+var addressTypeReaders = map[byte]addressTypeReader{
+	1: {"IPv4", readIPv4Address},
+	3: {"Domain", readDomainAddress},
+	4: {"IPv6", readIPv6Address},
+}
+
+func readIPv4Address(conn net.Conn) (string, error) {
+	return readIPAddress(conn, 4)
+}
+
+func readIPv6Address(conn net.Conn) (string, error) {
+	return readIPAddress(conn, 16)
+}
+
+func readIPAddress(conn net.Conn, size int) (string, error) {
+	ip := make([]byte, size)
+	if _, err := io.ReadFull(conn, ip); err != nil {
+		return "", err
 	}
+	return net.IP(ip).String(), nil
+}
+
+func readDomainAddress(conn net.Conn) (string, error) {
+	var l [1]byte
+	if _, err := io.ReadFull(conn, l[:]); err != nil {
+		return "", err
+	}
+	domain := make([]byte, l[0])
+	if _, err := io.ReadFull(conn, domain); err != nil {
+		return "", err
+	}
+	return string(domain), nil
+}
+
+func readSOCKS5Host(conn net.Conn, atyp byte) (string, error) {
+	reader, ok := addressTypeReaders[atyp]
+	if !ok {
+		return "", fmt.Errorf("unsupported address type: %d", atyp)
+	}
+	return reader.read(conn)
 }
 
 func readSOCKS5Port(conn net.Conn) (uint16, error) {
