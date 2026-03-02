@@ -11,6 +11,14 @@ import (
 	"time"
 )
 
+// monitorState tracks the last known network state for change detection
+type monitorState struct {
+	lastGW        string
+	lastSrcIP     string
+	lastIPv6GW    string
+	lastIPv6SrcIP string
+}
+
 // RouteMonitor monitors network changes and maintains routes
 type RouteMonitor struct {
 	routeManager *RouteManager
@@ -96,10 +104,12 @@ func (rm *RouteMonitor) monitorNetworkChanges() {
 	}
 
 	// Track last known gateway to detect changes
-	lastGW := routeInfo.OriginalGW
-	lastSrcIP := routeInfo.OriginalSrcIP
-	lastIPv6GW := routeInfo.OriginalIPv6GW
-	lastIPv6SrcIP := routeInfo.OriginalIPv6SrcIP
+	state := &monitorState{
+		lastGW:        routeInfo.OriginalGW,
+		lastSrcIP:     routeInfo.OriginalSrcIP,
+		lastIPv6GW:    routeInfo.OriginalIPv6GW,
+		lastIPv6SrcIP: routeInfo.OriginalIPv6SrcIP,
+	}
 
 	changeChan, err := rm.startIPMonitor()
 	if err != nil {
@@ -114,18 +124,18 @@ func (rm *RouteMonitor) monitorNetworkChanges() {
 		case <-changeChan:
 			// Network change detected, debounce and check
 			time.Sleep(100 * time.Millisecond)
-			rm.checkAndUpdateRoutes(&lastGW, &lastSrcIP, &lastIPv6GW, &lastIPv6SrcIP)
+			rm.checkAndUpdateRoutes(state)
 		}
 	}
 }
 
 // routesChanged checks if any route parameters have changed
-func routesChanged(gw, srcIP, ipv6gw, ipv6src string, lastGW, lastSrcIP, lastIPv6GW, lastIPv6SrcIP *string) bool {
-	return gw != *lastGW || srcIP != *lastSrcIP || ipv6gw != *lastIPv6GW || ipv6src != *lastIPv6SrcIP
+func (s *monitorState) routesChanged(gw, srcIP, ipv6gw, ipv6src string) bool {
+	return gw != s.lastGW || srcIP != s.lastSrcIP || ipv6gw != s.lastIPv6GW || ipv6src != s.lastIPv6SrcIP
 }
 
 // checkAndUpdateRoutes checks if routes need updating and reconfigures if needed
-func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, lastIPv6SrcIP *string) {
+func (rm *RouteMonitor) checkAndUpdateRoutes(state *monitorState) {
 	gw, iface, srcIP, err := GetDefaultGateway()
 	if err != nil {
 		// Default route might be temporarily missing
@@ -135,7 +145,7 @@ func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, last
 	ipv6gw, ipv6iface, ipv6src, _ := GetDefaultIPv6Gateway()
 
 	// Check if anything changed
-	if !routesChanged(gw, srcIP, ipv6gw, ipv6src, lastGW, lastSrcIP, lastIPv6GW, lastIPv6SrcIP) {
+	if !state.routesChanged(gw, srcIP, ipv6gw, ipv6src) {
 		return
 	}
 
@@ -161,10 +171,10 @@ func (rm *RouteMonitor) checkAndUpdateRoutes(lastGW, lastSrcIP, lastIPv6GW, last
 		return
 	}
 
-	*lastGW = gw
-	*lastSrcIP = srcIP
-	*lastIPv6GW = ipv6gw
-	*lastIPv6SrcIP = ipv6src
+	state.lastGW = gw
+	state.lastSrcIP = srcIP
+	state.lastIPv6GW = ipv6gw
+	state.lastIPv6SrcIP = ipv6src
 
 	rm.logRoutesConfigured()
 	slog.Info("WAN route changed, routes updated")
