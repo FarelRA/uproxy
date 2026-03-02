@@ -69,8 +69,8 @@ func newUDPSessionManager(sshClient *ssh.Client, conn *net.UDPConn) *udpSessionM
 
 func (m *udpSessionManager) setClientAddr(addr *net.UDPAddr) {
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.clientAddr = addr
-	m.mu.Unlock()
 }
 
 func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) (ssh.Channel, error) {
@@ -96,8 +96,8 @@ func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) 
 	common.LogInfo("socks5_udp", "UDP Stream started", "role", "client", "target", targetStr)
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.sessions[targetStr] = ch
-	m.mu.Unlock()
 
 	m.wg.Add(1)
 	go m.handleSessionResponses(targetStr, ch, header)
@@ -112,8 +112,8 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 		m.wg.Done()
 		ch.Close()
 		m.mu.Lock()
+		defer m.mu.Unlock()
 		delete(m.sessions, target)
-		m.mu.Unlock()
 		common.LogInfo("socks5_udp", "UDP Stream closed", "role", "client", "target", target, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
 	}()
 
