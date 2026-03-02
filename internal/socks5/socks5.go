@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"sync"
 
 	"uproxy/internal/common"
 	"uproxy/internal/config"
@@ -45,11 +46,17 @@ func ServeSOCKS5(ctx context.Context, listenAddr string, dialTCP func(context.Co
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+
+	// Use sync.Once to prevent double close
+	var closeOnce sync.Once
+	closeListener := func() {
+		listener.Close()
+	}
+	defer closeOnce.Do(closeListener)
 
 	go func() {
 		<-ctx.Done()
-		listener.Close()
+		closeOnce.Do(closeListener)
 	}()
 
 	for {

@@ -76,14 +76,12 @@ func (m *ConnectivityMonitor) checkConnectivity() {
 	timeSinceRx := now.Sub(lastRx)
 	timeSinceTx := now.Sub(lastTx)
 
-	// Scenario 1: Complete idle (no TX or RX) - this is normal, no action needed
-	if timeSinceRx > m.idleTimeout && timeSinceTx > m.idleTimeout {
-		return
+	// Check for connectivity issues
+	if m.isCompletelyIdle(timeSinceRx, timeSinceTx) {
+		return // Normal idle state
 	}
 
-	// Scenario 2: Asymmetric traffic - we're sending but not receiving
-	// This indicates: ISP down, firewall blocking, NAT timeout, mobile network issue
-	if timeSinceTx < m.asymmetricTimeout && timeSinceRx > m.asymmetricTimeout {
+	if m.hasAsymmetricTraffic(timeSinceRx, timeSinceTx) {
 		slog.Warn("Connectivity issue detected: sending packets but not receiving",
 			"time_since_rx", timeSinceRx.Round(time.Second),
 			"time_since_tx", timeSinceTx.Round(time.Second))
@@ -93,8 +91,7 @@ func (m *ConnectivityMonitor) checkConnectivity() {
 		return
 	}
 
-	// Scenario 3: Long idle on RX but recent TX - potential connection stale
-	if timeSinceTx < m.checkInterval && timeSinceRx > m.idleTimeout {
+	if m.hasStaleConnection(timeSinceRx, timeSinceTx) {
 		slog.Warn("Connectivity issue detected: recent TX but no RX for extended period",
 			"time_since_rx", timeSinceRx.Round(time.Second))
 		if m.onFailure != nil {
@@ -102,6 +99,22 @@ func (m *ConnectivityMonitor) checkConnectivity() {
 		}
 		return
 	}
+}
+
+// isCompletelyIdle checks if both TX and RX are idle (normal state)
+func (m *ConnectivityMonitor) isCompletelyIdle(timeSinceRx, timeSinceTx time.Duration) bool {
+	return timeSinceRx > m.idleTimeout && timeSinceTx > m.idleTimeout
+}
+
+// hasAsymmetricTraffic detects when we're sending but not receiving
+// This indicates: ISP down, firewall blocking, NAT timeout, mobile network issue
+func (m *ConnectivityMonitor) hasAsymmetricTraffic(timeSinceRx, timeSinceTx time.Duration) bool {
+	return timeSinceTx < m.asymmetricTimeout && timeSinceRx > m.asymmetricTimeout
+}
+
+// hasStaleConnection detects long RX idle with recent TX (potential stale connection)
+func (m *ConnectivityMonitor) hasStaleConnection(timeSinceRx, timeSinceTx time.Duration) bool {
+	return timeSinceTx < m.checkInterval && timeSinceRx > m.idleTimeout
 }
 
 // Close stops the connectivity monitor

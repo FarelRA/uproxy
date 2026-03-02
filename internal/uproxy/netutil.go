@@ -43,59 +43,57 @@ func IsRoot() bool {
 	return os.Geteuid() == 0
 }
 
+// firstIPOfInterface is a generic helper that returns the first IP of a given version
+func firstIPOfInterface(ifaceName string, version int) (net.IP, error) {
+	iface, err := interfaceByNameFunc(ifaceName)
+	if err != nil {
+		return nil, fmt.Errorf("interface %s not found: %w", ifaceName, err)
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get addresses for %s: %w", ifaceName, err)
+	}
+
+	versionName := "IPv4"
+	if version == 6 {
+		versionName = "IPv6"
+	}
+
+	for _, addr := range addrs {
+		var ip net.IP
+		switch v := addr.(type) {
+		case *net.IPNet:
+			ip = v.IP
+		case *net.IPAddr:
+			ip = v.IP
+		}
+
+		if version == 4 {
+			if ip4 := ip.To4(); ip4 != nil {
+				return ip4, nil
+			}
+		} else if version == 6 {
+			// Check if it's IPv6 (not IPv4) and not link-local
+			if ip.To4() == nil && ip.To16() != nil && !ip.IsLinkLocalUnicast() {
+				return ip, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("no %s address found on interface %s", versionName, ifaceName)
+}
+
 // FirstIPv4OfInterface iterates through all IP addresses of a given network interface
 // and returns the very first valid IPv4 address it finds.
 // This is essential for forcing the proxy's outbound traffic (both TCP and UDP)
 // through a specific VPN tunnel or network interface (e.g., tun0).
 func FirstIPv4OfInterface(ifaceName string) (net.IP, error) {
-	iface, err := interfaceByNameFunc(ifaceName)
-	if err != nil {
-		return nil, fmt.Errorf("interface %s not found: %w", ifaceName, err)
-	}
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get addresses for %s: %w", ifaceName, err)
-	}
-	for _, addr := range addrs {
-		var ip net.IP
-		switch v := addr.(type) {
-		case *net.IPNet:
-			ip = v.IP
-		case *net.IPAddr:
-			ip = v.IP
-		}
-		if ip4 := ip.To4(); ip4 != nil {
-			return ip4, nil
-		}
-	}
-	return nil, fmt.Errorf("no IPv4 address found on interface %s", ifaceName)
+	return firstIPOfInterface(ifaceName, 4)
 }
 
 // FirstIPv6OfInterface iterates through all IP addresses of a given network interface
 // and returns the very first valid IPv6 address it finds (excluding link-local).
 func FirstIPv6OfInterface(ifaceName string) (net.IP, error) {
-	iface, err := interfaceByNameFunc(ifaceName)
-	if err != nil {
-		return nil, fmt.Errorf("interface %s not found: %w", ifaceName, err)
-	}
-	addrs, err := iface.Addrs()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get addresses for %s: %w", ifaceName, err)
-	}
-	for _, addr := range addrs {
-		var ip net.IP
-		switch v := addr.(type) {
-		case *net.IPNet:
-			ip = v.IP
-		case *net.IPAddr:
-			ip = v.IP
-		}
-		// Check if it's IPv6 (not IPv4) and not link-local
-		if ip.To4() == nil && ip.To16() != nil && !ip.IsLinkLocalUnicast() {
-			return ip, nil
-		}
-	}
-	return nil, fmt.Errorf("no IPv6 address found on interface %s", ifaceName)
+	return firstIPOfInterface(ifaceName, 6)
 }
 
 // FirstIPOfInterface returns the first IP address (IPv4 or IPv6) of a given interface.

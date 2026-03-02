@@ -135,6 +135,25 @@ func (m *TUNManager) UnregisterClient(ipv4, ipv6 string) {
 	}
 }
 
+// parsePacketDestination extracts the destination IP from an IP packet
+func parsePacketDestination(packet []byte, n int) (string, bool) {
+	version := packet[0] >> 4
+
+	if version == 4 {
+		if n < 20 {
+			return "", false
+		}
+		return net.IP(packet[16:20]).String(), true
+	} else if version == 6 {
+		if n < 40 {
+			return "", false
+		}
+		return net.IP(packet[24:40]).String(), true
+	}
+
+	return "", false // Invalid IP version
+}
+
 // dispatchPackets reads packets from TUN device and routes them to the correct client.
 func (m *TUNManager) dispatchPackets() {
 	buf := make([]byte, 2048)
@@ -152,22 +171,10 @@ func (m *TUNManager) dispatchPackets() {
 
 		packet := buf[:n]
 
-		// Parse IP header to get destination
-		version := packet[0] >> 4
-		var dstIP string
-
-		if version == 4 {
-			if n < 20 {
-				continue
-			}
-			dstIP = net.IP(packet[16:20]).String()
-		} else if version == 6 {
-			if n < 40 {
-				continue
-			}
-			dstIP = net.IP(packet[24:40]).String()
-		} else {
-			continue // Invalid IP version
+		// Parse destination IP from packet
+		dstIP, ok := parsePacketDestination(packet, n)
+		if !ok {
+			continue
 		}
 
 		// Route packet to correct client
