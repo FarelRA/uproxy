@@ -224,24 +224,29 @@ func (m *TUNManager) dispatchPackets() {
 		}
 
 		// Route packet to correct client
-		m.mu.RLock()
-		route, exists := m.clients[dstIP]
-		m.mu.RUnlock()
+		m.routePacketToClient(packet, dstIP)
+	}
+}
 
-		if !exists {
-			// No client with this IP, drop packet
-			continue
-		}
+// routePacketToClient routes a packet to the appropriate client based on destination IP
+func (m *TUNManager) routePacketToClient(packet []byte, dstIP string) {
+	m.mu.RLock()
+	route, exists := m.clients[dstIP]
+	m.mu.RUnlock()
 
-		// Send packet to client's SSH channel (framed)
-		select {
-		case <-route.done:
-			// Client disconnected
-			continue
-		default:
-			if err := framing.WriteFramed(route.Channel, packet); err != nil {
-				slog.Debug("Failed to write packet to client", "ip", dstIP, "error", err)
-			}
+	if !exists {
+		// No client with this IP, drop packet
+		return
+	}
+
+	// Send packet to client's SSH channel (framed)
+	select {
+	case <-route.done:
+		// Client disconnected
+		return
+	default:
+		if err := framing.WriteFramed(route.Channel, packet); err != nil {
+			slog.Debug("Failed to write packet to client", "ip", dstIP, "error", err)
 		}
 	}
 }
