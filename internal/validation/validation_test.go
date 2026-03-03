@@ -314,7 +314,7 @@ func TestValidateClientMode(t *testing.T) {
 			cfg: &config.ClientConfig{
 				Mode: "tun",
 			},
-			wantErr: true, // Will fail unless running as root
+			wantErr: false, // Privilege check happens at runtime, not during validation
 		},
 	}
 

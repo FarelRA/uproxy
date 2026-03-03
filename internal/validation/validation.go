@@ -7,7 +7,6 @@ import (
 	"net"
 
 	"uproxy/internal/config"
-	"uproxy/internal/uproxy"
 )
 
 // validateIPv4HeaderLength checks if the IPv4 header length is valid
@@ -118,6 +117,7 @@ func ValidateSOCKS5Command(cmd byte) bool {
 }
 
 // ValidateClientMode validates the client mode configuration
+// Note: Privilege checks for TUN mode should be done at runtime, not during config validation
 func ValidateClientMode(cfg *config.ClientConfig) error {
 	switch cfg.Mode {
 	case "socks5":
@@ -125,9 +125,7 @@ func ValidateClientMode(cfg *config.ClientConfig) error {
 			return fmt.Errorf("--listen is required for socks5 mode")
 		}
 	case "tun":
-		if !uproxy.IsRoot() {
-			return fmt.Errorf("TUN mode requires root privileges. Run with sudo or use --mode socks5")
-		}
+		// Privilege check is done at runtime when TUN is actually selected
 	case "auto":
 		// Will be resolved at runtime
 	default:

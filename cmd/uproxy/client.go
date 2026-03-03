@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -22,6 +22,7 @@ import (
 	"uproxy/internal/socks5"
 	"uproxy/internal/tun"
 	"uproxy/internal/uproxy"
+	"uproxy/internal/validation"
 )
 
 func clientCmd() *cobra.Command {
@@ -90,21 +91,7 @@ func runClient(ctx context.Context, cfg *config.ClientConfig) error {
 
 // validateMode validates mode-specific requirements
 func validateMode(cfg *config.ClientConfig) error {
-	switch cfg.Mode {
-	case "socks5":
-		if cfg.ListenAddr == "" {
-			return fmt.Errorf("--listen is required for socks5 mode")
-		}
-	case "tun":
-		if !uproxy.IsRoot() {
-			return fmt.Errorf("TUN mode requires root privileges. Run with sudo or use --mode socks5")
-		}
-	case "auto":
-		// Will be resolved in runClient
-	default:
-		return fmt.Errorf("invalid mode: %s (must be 'auto', 'socks5', or 'tun')", cfg.Mode)
-	}
-	return nil
+	return validation.ValidateClientMode(cfg)
 }
 
 // connectionManager manages the SSH connection lifecycle
@@ -112,12 +99,10 @@ type connectionManager struct {
 	cfg    *config.ClientConfig
 	signer ssh.Signer
 
-	mu           sync.RWMutex
-	sshClient    *ssh.Client
-	kcpConn      *kcp.UDPSession
-	packetConn   *uproxy.ResilientPacketConn
-	routeManager *tun.RouteManager
-	diagnostics  *network.Diagnostics
+	mu         sync.RWMutex
+	sshClient  *ssh.Client
+	kcpConn    *kcp.UDPSession
+	packetConn *uproxy.ResilientPacketConn
 }
 
 func newConnectionManager(cfg *config.ClientConfig, signer ssh.Signer) *connectionManager {
@@ -204,9 +189,9 @@ func (cm *connectionManager) createPacketConn() (*uproxy.ResilientPacketConn, er
 	)
 	cm.packetConn = packetConn
 
-	// Setup network diagnostics and failure handler
-	cm.diagnostics = network.NewDiagnostics(cm.cfg.ServerAddr, slog.Default())
+	// Setup connectivity failure handler
 	packetConn.SetFailureHandler(cm.cfg.ServerAddr, cm.handleConnectivityFailure)
+	packetConn.SetIdleTimeout(cm.cfg.IdleTimeout)
 
 	return packetConn, nil
 }
@@ -306,23 +291,9 @@ func (cm *connectionManager) closeConnectionLocked() {
 
 // handleConnectivityFailure is called when connectivity issues are detected
 func (cm *connectionManager) handleConnectivityFailure(result network.DiagnosticResult) bool {
-	switch result.FailureType {
-	case network.FailureRouteChanged:
-		// Route changed - reset routes if we have a route manager
-		if cm.routeManager != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-
-			if err := cm.routeManager.ResetRoutes(ctx); err != nil {
-				slog.Error("Failed to reset routes after network change", "error", err)
-				return false
-			}
-			slog.Info("Routes reset successfully after network change")
-			return true
-		}
-	}
-
-	// For other failures, let the default rebind logic handle it
+	_ = result
+	// Let resilient UDP default rebind logic handle all failure types.
+	// TUN route updates are handled by the dedicated route monitor path.
 	return false
 }
 
@@ -351,36 +322,28 @@ func startProxy(ctx context.Context, cfg *config.ClientConfig, connMgr *connecti
 
 // startSOCKS5Proxy starts the SOCKS5 proxy server
 func startSOCKS5Proxy(ctx context.Context, cfg *config.ClientConfig, connMgr *connectionManager) error {
-	startSOCKS5Server(ctx, cfg.ListenAddr, connMgr.getSSHClient, "socks5")
-	<-ctx.Done()
-	return nil
+	return startSOCKS5Server(ctx, cfg.ListenAddr, cfg.TCPBufSize, connMgr.getSSHClient, "socks5")
 }
 
 // startSOCKS5Server is a helper that starts a SOCKS5 server with the given configuration
-func startSOCKS5Server(ctx context.Context, listenAddr string, getClient func() *ssh.Client, layer string) {
-	go func() {
-		err := socks5.ServeSOCKS5(ctx, listenAddr,
-			func(ctx context.Context, addr string) (net.Conn, error) {
-				client := getClient()
-				if client == nil {
-					return nil, fmt.Errorf("ssh client not connected")
-				}
-				return socks5.DialTCP(ctx, client, addr)
-			},
-			func(ctx context.Context) (net.Addr, io.Closer, error) {
-				client := getClient()
-				if client == nil {
-					return nil, nil, fmt.Errorf("ssh client not connected")
-				}
-				return socks5.DialUDP(ctx, client, "127.0.0.1")
-			})
 
-		if err != nil {
-			slog.Error("SOCKS5 proxy server stopped", "layer", layer, "error", err)
-		}
-	}()
-
+func startSOCKS5Server(ctx context.Context, listenAddr string, tcpBufSize int, getClient func() *ssh.Client, layer string) error {
 	slog.Info("SOCKS5 TCP/UDP proxy listening", "layer", layer, "addr", listenAddr)
+	return socks5.ServeSOCKS5(ctx, listenAddr, tcpBufSize,
+		func(ctx context.Context, addr string) (net.Conn, error) {
+			client := getClient()
+			if client == nil {
+				return nil, fmt.Errorf("ssh client not connected")
+			}
+			return socks5.DialTCP(ctx, client, addr)
+		},
+		func(ctx context.Context) (net.Addr, io.Closer, error) {
+			client := getClient()
+			if client == nil {
+				return nil, nil, fmt.Errorf("ssh client not connected")
+			}
+			return socks5.DialUDP(ctx, client, "127.0.0.1")
+		})
 }
 
 // shouldFallbackToSOCKS5 checks if the error indicates the server doesn't support TUN mode
@@ -388,19 +351,23 @@ func shouldFallbackToSOCKS5(err error) bool {
 	if err == nil {
 		return false
 	}
-	errStr := err.Error()
-	return strings.Contains(errStr, "channel type") && strings.Contains(errStr, "not supported")
+	return errors.Is(err, tun.ErrTUNNotSupported)
 }
 
 // startTUNTunnel starts the TUN tunnel with fallback to SOCKS5
-func waitForSSHClient(connMgr *connectionManager) *ssh.Client {
+func waitForSSHClient(ctx context.Context, connMgr *connectionManager) (*ssh.Client, error) {
 	for {
 		client := connMgr.getSSHClient()
 		if client != nil {
-			return client
+			return client, nil
 		}
+
 		slog.Warn("Waiting for SSH connection before starting TUN...")
-		time.Sleep(1 * time.Second)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(1 * time.Second):
+		}
 	}
 }
 
@@ -440,8 +407,11 @@ func shouldRestartTUN(ctx context.Context) bool {
 func runTUNLoop(ctx context.Context, connMgr *connectionManager, tunCfg *tun.Config, routes string, autoRoute bool, serverAddr string, fallbackCh chan<- struct{}) {
 	tunFailed := false
 	for {
-		client := waitForSSHClient(connMgr)
-		err := tun.ServeTUN(ctx, client, tunCfg, routes, autoRoute, serverAddr)
+		client, err := waitForSSHClient(ctx, connMgr)
+		if err != nil {
+			return
+		}
+		err = tun.ServeTUN(ctx, client, tunCfg, routes, autoRoute, serverAddr)
 
 		shouldReturn, newTunFailed := handleTUNError(err, tunFailed, fallbackCh)
 		tunFailed = newTunFailed
@@ -456,7 +426,11 @@ func runTUNLoop(ctx context.Context, connMgr *connectionManager, tunCfg *tun.Con
 }
 
 func startSOCKS5Fallback(ctx context.Context, listenAddr string, connMgr *connectionManager) {
-	startSOCKS5Server(ctx, listenAddr, connMgr.getSSHClient, "fallback")
+	go func() {
+		if err := startSOCKS5Server(ctx, listenAddr, connMgr.cfg.TCPBufSize, connMgr.getSSHClient, "fallback"); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("SOCKS5 proxy server stopped", "layer", "fallback", "error", err)
+		}
+	}()
 }
 
 func monitorTUNFallback(ctx context.Context, fallbackCh <-chan struct{}, listenAddr string, connMgr *connectionManager) {
@@ -473,9 +447,6 @@ func startTUNTunnel(ctx context.Context, cfg *config.ClientConfig, connMgr *conn
 		Name: cfg.TUN.Name,
 		MTU:  cfg.TUN.MTU,
 	}
-
-	// Setup route manager for handling route changes
-	connMgr.routeManager = tun.NewRouteManager(cfg.ServerAddr, cfg.TUN.Name, slog.Default())
 
 	fallbackToSOCKS5 := make(chan struct{}, 1)
 

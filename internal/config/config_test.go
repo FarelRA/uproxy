@@ -1,6 +1,7 @@
 package config
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -274,6 +275,11 @@ func TestAddClientFlags(t *testing.T) {
 }
 
 func TestSetupSSHPaths(t *testing.T) {
+	defaultDir := defaultSSHDir()
+	defaultPrivateKey := filepath.Join(defaultDir, "id_ed25519")
+	defaultAuthorizedKeys := filepath.Join(defaultDir, "authorized_keys")
+	defaultKnownHosts := filepath.Join(defaultDir, "known_hosts")
+
 	tests := []struct {
 		name     string
 		cfg      SSHConfig
@@ -285,9 +291,9 @@ func TestSetupSSHPaths(t *testing.T) {
 			cfg:      SSHConfig{},
 			isServer: true,
 			expected: SSHConfig{
-				Dir:            "~/.ssh",
-				PrivateKey:     "~/.ssh/id_ed25519",
-				AuthorizedKeys: "~/.ssh/authorized_keys",
+				Dir:            defaultDir,
+				PrivateKey:     defaultPrivateKey,
+				AuthorizedKeys: defaultAuthorizedKeys,
 			},
 		},
 		{
@@ -295,9 +301,9 @@ func TestSetupSSHPaths(t *testing.T) {
 			cfg:      SSHConfig{},
 			isServer: false,
 			expected: SSHConfig{
-				Dir:        "~/.ssh",
-				PrivateKey: "~/.ssh/id_ed25519",
-				KnownHosts: "~/.ssh/known_hosts",
+				Dir:        defaultDir,
+				PrivateKey: defaultPrivateKey,
+				KnownHosts: defaultKnownHosts,
 			},
 		},
 		{
@@ -331,9 +337,9 @@ func TestSetupSSHPaths(t *testing.T) {
 			},
 			isServer: true,
 			expected: SSHConfig{
-				Dir:            "~/.ssh",
+				Dir:            defaultDir,
 				PrivateKey:     "/custom/key",
-				AuthorizedKeys: "~/.ssh/authorized_keys",
+				AuthorizedKeys: defaultAuthorizedKeys,
 			},
 		},
 		{
@@ -343,8 +349,8 @@ func TestSetupSSHPaths(t *testing.T) {
 			},
 			isServer: true,
 			expected: SSHConfig{
-				Dir:            "~/.ssh",
-				PrivateKey:     "~/.ssh/id_ed25519",
+				Dir:            defaultDir,
+				PrivateKey:     defaultPrivateKey,
 				AuthorizedKeys: "/custom/authorized_keys",
 			},
 		},
@@ -355,8 +361,8 @@ func TestSetupSSHPaths(t *testing.T) {
 			},
 			isServer: false,
 			expected: SSHConfig{
-				Dir:        "~/.ssh",
-				PrivateKey: "~/.ssh/id_ed25519",
+				Dir:        defaultDir,
+				PrivateKey: defaultPrivateKey,
 				KnownHosts: "/custom/known_hosts",
 			},
 		},

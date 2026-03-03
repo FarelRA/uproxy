@@ -253,7 +253,7 @@ func (h *channelHandler) handleTCP(newChan ssh.NewChannel) error {
 		return err
 	}
 	go ssh.DiscardRequests(requests)
-	go socks5.HandleTCP(h.ctx, channel, h.remoteAddr, h.cfg.Outbound, h.cfg.ProxyDialTimeout)
+	go socks5.HandleTCP(h.ctx, channel, h.remoteAddr, h.cfg.Outbound, h.cfg.ProxyDialTimeout, h.cfg.TCPBufSize)
 	return nil
 }
 
@@ -268,6 +268,10 @@ func (h *channelHandler) handleUDP(newChan ssh.NewChannel) error {
 }
 
 func (h *channelHandler) handleTUN(newChan ssh.NewChannel) error {
+	if h.tunManager == nil {
+		return newChan.Reject(ssh.Prohibited, "TUN mode is not enabled")
+	}
+
 	channel, requests, err := newChan.Accept()
 	if err != nil {
 		return err

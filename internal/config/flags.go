@@ -1,6 +1,9 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/spf13/cobra"
 )
 
@@ -77,7 +80,7 @@ func AddClientFlags(cmd *cobra.Command, cfg *ClientConfig) {
 // SetupSSHPaths sets up default SSH paths if not specified
 func SetupSSHPaths(cfg *SSHConfig, isServer bool) {
 	if cfg.Dir == "" {
-		cfg.Dir = "~/.ssh"
+		cfg.Dir = defaultSSHDir()
 	}
 
 	if cfg.PrivateKey == "" {
@@ -91,6 +94,14 @@ func SetupSSHPaths(cfg *SSHConfig, isServer bool) {
 	if !isServer && cfg.KnownHosts == "" {
 		cfg.KnownHosts = cfg.Dir + "/known_hosts"
 	}
+}
+
+func defaultSSHDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ".ssh"
+	}
+	return filepath.Join(home, ".ssh")
 }
 
 // InitializeCommon performs common initialization steps for both client and server
