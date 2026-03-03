@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+const (
+	// networkChangeDebounceDelay is the delay after detecting a network change
+	// to avoid processing rapid successive changes
+	networkChangeDebounceDelay = 100 * time.Millisecond
+)
+
 // monitorState tracks the last known network state for change detection
 type monitorState struct {
 	lastGW        string
@@ -128,7 +134,7 @@ func (rm *RouteMonitor) monitorNetworkChanges() {
 			return
 		case <-changeChan:
 			// Network change detected, debounce and check
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(networkChangeDebounceDelay)
 			rm.checkAndUpdateRoutes(state)
 		}
 	}

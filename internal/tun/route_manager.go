@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+const (
+	// deviceReadyPollInterval is the interval for polling TUN device readiness
+	deviceReadyPollInterval = 100 * time.Millisecond
+)
+
 // RouteManager handles route setup and cleanup for TUN interfaces
 type RouteManager struct {
 	serverAddr string
@@ -126,7 +131,7 @@ func (rm *RouteManager) waitForTunDevice(ctx context.Context) error {
 			return nil
 		}
 
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(deviceReadyPollInterval)
 	}
 
 	return fmt.Errorf("TUN device %s did not become ready within %v", rm.tunDevice, timeout)

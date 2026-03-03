@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"strconv"
 	"sync"
@@ -145,7 +146,9 @@ func (m *udpSessionManager) closeAllSessions() {
 	defer m.mu.Unlock()
 
 	for target, ch := range m.sessions {
-		_ = ch.Close()
+		if err := ch.Close(); err != nil {
+			slog.Debug("Failed to close UDP session channel", "target", target, "error", err)
+		}
 		delete(m.sessions, target)
 	}
 }

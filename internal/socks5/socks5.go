@@ -26,8 +26,12 @@ const (
 	replyNoAcceptableMethods = 0xff
 )
 
-// maxConcurrentConnections limits the number of concurrent SOCKS5 connections
-const maxConcurrentConnections = 1000
+const (
+	// maxConcurrentConnections limits the number of concurrent SOCKS5 connections
+	maxConcurrentConnections = 1000
+	// acceptRetryDelay is the delay between retry attempts after accept failure
+	acceptRetryDelay = 100 * time.Millisecond
+)
 
 // writeSOCKS5Error writes a SOCKS5 error response to the connection
 func writeSOCKS5Error(conn net.Conn, errorCode byte) error {
@@ -86,7 +90,7 @@ func ServeSOCKS5(ctx context.Context, listenAddr string, tcpBufSize int, dialTCP
 					return nil
 				}
 				common.LogWarn("socks5", "SOCKS5 accept failed", "error", err)
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(acceptRetryDelay)
 				continue
 			}
 		}

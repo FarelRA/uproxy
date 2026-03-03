@@ -12,6 +12,11 @@ import (
 	"uproxy/internal/telemetry"
 )
 
+const (
+	// reconnectRetryDelay is the delay between retry attempts after a connection error
+	reconnectRetryDelay = 100 * time.Millisecond
+)
+
 var errConnectionUnavailable = errors.New("connection unavailable")
 
 const (
@@ -285,7 +290,7 @@ func (r *ResilientPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err erro
 				return 0, nil, err
 			}
 			r.triggerReconnect()
-			time.Sleep(100 * time.Millisecond)
+			time.Sleep(reconnectRetryDelay)
 			continue
 		}
 
