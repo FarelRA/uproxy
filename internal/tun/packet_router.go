@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"time"
 
 	"uproxy/internal/framing"
 )
@@ -47,8 +48,9 @@ func (pr *PacketRouter) dispatchPackets() {
 			case <-pr.ctx.Done():
 				return
 			default:
-				slog.Error("TUN read error", "error", err)
-				return
+				slog.Error("TUN read error, retrying", "error", err)
+				time.Sleep(100 * time.Millisecond)
+				continue
 			}
 		}
 
@@ -96,14 +98,26 @@ func (pr *PacketRouter) routePacketToClient(packet []byte, dstIP string) {
 		return
 	}
 
-	// Send packet to client's SSH channel (framed)
+	// Send packet to client's SSH channel (framed) with quick retry
 	select {
 	case <-route.done:
 		// Client disconnected
 		return
 	default:
-		if err := framing.WriteFramed(route.Channel, packet); err != nil {
-			slog.Debug("Failed to write packet to client", "ip", dstIP, "error", err)
+		const maxRetries = 3
+		var lastErr error
+		for retry := 0; retry < maxRetries; retry++ {
+			if err := framing.WriteFramed(route.Channel, packet); err != nil {
+				lastErr = err
+				// Quick retry without sleep to avoid blocking dispatch loop
+				continue
+			} else {
+				lastErr = nil
+				break
+			}
+		}
+		if lastErr != nil {
+			slog.Warn("Failed to write packet to client after retries", "ip", dstIP, "retries", maxRetries, "error", lastErr)
 		}
 	}
 }

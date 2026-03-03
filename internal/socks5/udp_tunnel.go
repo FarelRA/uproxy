@@ -225,8 +225,14 @@ func withUDPBuffer(fn func([]byte)) {
 }
 
 // forwardChannelToConn forwards data from SSH channel to UDP connection.
-func forwardChannelToConn(channel ssh.Channel, conn net.Conn, txBytes *int64, timeout time.Duration) {
+func forwardChannelToConn(ctx context.Context, channel ssh.Channel, conn net.Conn, txBytes *int64, timeout time.Duration) {
 	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		data, err := framing.ReadFramed(channel)
 		if err != nil {
 			return
@@ -242,9 +248,15 @@ func forwardChannelToConn(channel ssh.Channel, conn net.Conn, txBytes *int64, ti
 }
 
 // forwardConnToChannel forwards data from UDP connection to SSH channel.
-func forwardConnToChannel(conn net.Conn, channel ssh.Channel, rxBytes *int64, timeout time.Duration) {
+func forwardConnToChannel(ctx context.Context, conn net.Conn, channel ssh.Channel, rxBytes *int64, timeout time.Duration) {
 	withUDPBuffer(func(buf []byte) {
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			conn.SetReadDeadline(time.Now().Add(timeout))
 			n, err := conn.Read(buf)
 			if err != nil {
@@ -261,20 +273,25 @@ func forwardConnToChannel(conn net.Conn, channel ssh.Channel, rxBytes *int64, ti
 
 // proxyUDPBidirectional handles bidirectional UDP forwarding between SSH channel and UDP connection.
 func proxyUDPBidirectional(channel ssh.Channel, conn net.Conn) (txBytes, rxBytes int64) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	var wg sync.WaitGroup
 
 	// SSH -> Internet (TX)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		forwardChannelToConn(channel, conn, &txBytes, config.DefaultUDPTimeout)
+		defer cancel() // Signal other goroutine to stop
+		forwardChannelToConn(ctx, channel, conn, &txBytes, config.DefaultUDPTimeout)
 	}()
 
 	// Internet -> SSH (RX)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		forwardConnToChannel(conn, channel, &rxBytes, config.DefaultUDPTimeout)
+		defer cancel() // Signal other goroutine to stop
+		forwardConnToChannel(ctx, conn, channel, &rxBytes, config.DefaultUDPTimeout)
 	}()
 
 	wg.Wait()

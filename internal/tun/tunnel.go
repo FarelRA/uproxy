@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/songgao/water"
 	"golang.org/x/crypto/ssh"
@@ -168,9 +169,29 @@ func forwardTUNToSSH(ctx context.Context, iface *water.Interface, sshChan ssh.Ch
 			continue
 		}
 
-		// Write framed packet to SSH channel
-		if err := framing.WriteFramed(sshChan, packet); err != nil {
-			errChan <- fmt.Errorf("SSH write error: %w", err)
+		// Write framed packet to SSH channel with retry
+		const maxRetries = 3
+		var lastErr error
+		for retry := 0; retry < maxRetries; retry++ {
+			if err := framing.WriteFramed(sshChan, packet); err != nil {
+				lastErr = err
+				if retry < maxRetries-1 {
+					// Check context before retrying
+					select {
+					case <-ctx.Done():
+						return
+					default:
+						time.Sleep(time.Duration(retry+1) * 10 * time.Millisecond)
+						continue
+					}
+				}
+			} else {
+				lastErr = nil
+				break
+			}
+		}
+		if lastErr != nil {
+			errChan <- fmt.Errorf("SSH write error after %d retries: %w", maxRetries, lastErr)
 			return
 		}
 
