@@ -845,7 +845,7 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 	// makeSpace makes room for writing
 	makeSpace := func(space int) {
 		size := len(buffer) - len(ptr)
-		if size+space > int(kcp.mtu) {
+		if size+space > len(buffer) {
 			kcp.output(buffer, size)
 			ptr = buffer
 		}
