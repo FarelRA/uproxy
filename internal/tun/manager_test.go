@@ -13,8 +13,10 @@ import (
 // TestAllocateIP tests IP allocation through TUNManager
 func TestAllocateIP(t *testing.T) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	// Allocate first IP
@@ -47,8 +49,10 @@ func TestAllocateIP(t *testing.T) {
 // TestRegisterClient tests client registration
 func TestRegisterClient(t *testing.T) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	channel := testutil.NewMockSSHChannel()
@@ -74,9 +78,9 @@ func TestRegisterClient(t *testing.T) {
 	}
 
 	// Verify client is in map
-	mgr.mu.RLock()
-	_, exists := mgr.clients[ipv4]
-	mgr.mu.RUnlock()
+	mgr.ClientRegistry.Mu.RLock()
+	_, exists := mgr.ClientRegistry.Clients[ipv4]
+	mgr.ClientRegistry.Mu.RUnlock()
 
 	if !exists {
 		t.Error("Client not found in clients map")
@@ -86,8 +90,10 @@ func TestRegisterClient(t *testing.T) {
 // TestUnregisterClient tests client unregistration
 func TestUnregisterClient(t *testing.T) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	channel := testutil.NewMockSSHChannel()
@@ -98,9 +104,9 @@ func TestUnregisterClient(t *testing.T) {
 	mgr.RegisterClient(ipv4, ipv6, channel)
 
 	// Verify registered
-	mgr.mu.RLock()
-	_, exists := mgr.clients[ipv4]
-	mgr.mu.RUnlock()
+	mgr.ClientRegistry.Mu.RLock()
+	_, exists := mgr.ClientRegistry.Clients[ipv4]
+	mgr.ClientRegistry.Mu.RUnlock()
 	if !exists {
 		t.Fatal("Client should be registered")
 	}
@@ -109,9 +115,9 @@ func TestUnregisterClient(t *testing.T) {
 	mgr.UnregisterClient(ipv4, ipv6)
 
 	// Verify unregistered
-	mgr.mu.RLock()
-	_, exists = mgr.clients[ipv4]
-	mgr.mu.RUnlock()
+	mgr.ClientRegistry.Mu.RLock()
+	_, exists = mgr.ClientRegistry.Clients[ipv4]
+	mgr.ClientRegistry.Mu.RUnlock()
 	if exists {
 		t.Error("Client should be unregistered")
 	}
@@ -120,8 +126,10 @@ func TestUnregisterClient(t *testing.T) {
 // TestConcurrentClientOperations tests thread-safety of client operations
 func TestConcurrentClientOperations(t *testing.T) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	const numClients = 50
@@ -150,9 +158,9 @@ func TestConcurrentClientOperations(t *testing.T) {
 	wg.Wait()
 
 	// Verify all clients registered
-	mgr.mu.RLock()
-	clientCount := len(mgr.clients)
-	mgr.mu.RUnlock()
+	mgr.ClientRegistry.Mu.RLock()
+	clientCount := len(mgr.ClientRegistry.Clients)
+	mgr.ClientRegistry.Mu.RUnlock()
 
 	// Note: clientCount might be > numClients due to dual-stack (IPv4 + IPv6)
 	if clientCount < numClients {
@@ -163,8 +171,10 @@ func TestConcurrentClientOperations(t *testing.T) {
 // TestRegisterUnregisterCycle tests repeated register/unregister cycles
 func TestRegisterUnregisterCycle(t *testing.T) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	ipv4 := "10.0.0.2"
@@ -179,9 +189,9 @@ func TestRegisterUnregisterCycle(t *testing.T) {
 		}
 
 		// Verify registered
-		mgr.mu.RLock()
-		_, exists := mgr.clients[ipv4]
-		mgr.mu.RUnlock()
+		mgr.ClientRegistry.Mu.RLock()
+		_, exists := mgr.ClientRegistry.Clients[ipv4]
+		mgr.ClientRegistry.Mu.RUnlock()
 		if !exists {
 			t.Fatalf("Iteration %d: Client not registered", i)
 		}
@@ -190,9 +200,9 @@ func TestRegisterUnregisterCycle(t *testing.T) {
 		mgr.UnregisterClient(ipv4, ipv6)
 
 		// Verify unregistered
-		mgr.mu.RLock()
-		_, exists = mgr.clients[ipv4]
-		mgr.mu.RUnlock()
+		mgr.ClientRegistry.Mu.RLock()
+		_, exists = mgr.ClientRegistry.Clients[ipv4]
+		mgr.ClientRegistry.Mu.RUnlock()
 		if exists {
 			t.Fatalf("Iteration %d: Client still registered", i)
 		}
@@ -202,8 +212,10 @@ func TestRegisterUnregisterCycle(t *testing.T) {
 // TestMultipleClientsWithSameIPv6Prefix tests handling of IPv6 addresses
 func TestMultipleClientsWithDifferentIPs(t *testing.T) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	clients := []struct {
@@ -226,9 +238,9 @@ func TestMultipleClientsWithDifferentIPs(t *testing.T) {
 
 	// Verify all clients are registered
 	for _, c := range clients {
-		mgr.mu.RLock()
-		_, exists := mgr.clients[c.ipv4]
-		mgr.mu.RUnlock()
+		mgr.ClientRegistry.Mu.RLock()
+		_, exists := mgr.ClientRegistry.Clients[c.ipv4]
+		mgr.ClientRegistry.Mu.RUnlock()
 		if !exists {
 			t.Errorf("Client %s not found", c.ipv4)
 		}
@@ -238,11 +250,11 @@ func TestMultipleClientsWithDifferentIPs(t *testing.T) {
 	mgr.UnregisterClient(clients[1].ipv4, clients[1].ipv6)
 
 	// Verify first and third still exist
-	mgr.mu.RLock()
-	_, exists0 := mgr.clients[clients[0].ipv4]
-	_, exists1 := mgr.clients[clients[1].ipv4]
-	_, exists2 := mgr.clients[clients[2].ipv4]
-	mgr.mu.RUnlock()
+	mgr.ClientRegistry.Mu.RLock()
+	_, exists0 := mgr.ClientRegistry.Clients[clients[0].ipv4]
+	_, exists1 := mgr.ClientRegistry.Clients[clients[1].ipv4]
+	_, exists2 := mgr.ClientRegistry.Clients[clients[2].ipv4]
+	mgr.ClientRegistry.Mu.RUnlock()
 
 	if !exists0 {
 		t.Error("First client should still exist")
@@ -257,8 +269,10 @@ func TestMultipleClientsWithDifferentIPs(t *testing.T) {
 
 func TestAllocateAndNotifyClientWritesFramedAssignment(t *testing.T) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	channel := testutil.NewMockSSHChannel()
@@ -285,17 +299,19 @@ func TestAllocateAndNotifyClientWritesFramedAssignment(t *testing.T) {
 // TestUnregisterNonexistentClient tests unregistering a client that doesn't exist
 func TestUnregisterNonexistentClient(t *testing.T) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	// Should not panic
 	mgr.UnregisterClient("10.0.0.99", "fd00::99/64")
 
 	// Verify no clients
-	mgr.mu.RLock()
-	count := len(mgr.clients)
-	mgr.mu.RUnlock()
+	mgr.ClientRegistry.Mu.RLock()
+	count := len(mgr.ClientRegistry.Clients)
+	mgr.ClientRegistry.Mu.RUnlock()
 
 	if count != 0 {
 		t.Errorf("Expected 0 clients, got %d", count)
@@ -318,9 +334,9 @@ func TestBuildIPv4NATSubnet(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildIPv4NATSubnet(tt.ip, tt.netmask)
+			got := BuildIPv4NATSubnet(tt.ip, tt.netmask)
 			if got != tt.want {
-				t.Fatalf("buildIPv4NATSubnet(%q, %q) = %q, want %q", tt.ip, tt.netmask, got, tt.want)
+				t.Fatalf("BuildIPv4NATSubnet(%q, %q) = %q, want %q", tt.ip, tt.netmask, got, tt.want)
 			}
 		})
 	}
@@ -329,8 +345,10 @@ func TestBuildIPv4NATSubnet(t *testing.T) {
 // BenchmarkRegisterClient benchmarks client registration
 func BenchmarkRegisterClient(b *testing.B) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	b.ResetTimer()
@@ -344,8 +362,10 @@ func BenchmarkRegisterClient(b *testing.B) {
 // BenchmarkConcurrentRegister benchmarks concurrent client registration
 func BenchmarkConcurrentRegister(b *testing.B) {
 	mgr := &TUNManager{
-		clients:   make(map[string]*ClientRoute),
-		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		ClientRegistry: &ClientRegistry{
+			Clients:   make(map[string]*ClientRoute),
+			Allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+		},
 	}
 
 	b.ResetTimer()
