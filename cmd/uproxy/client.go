@@ -41,7 +41,15 @@ func clientCmd() *cobra.Command {
 	return cmd
 }
 
-func runClient(ctx context.Context, cfg *config.ClientConfig) error {
+func runClient(ctx context.Context, cfg *config.ClientConfig) (err error) {
+	// Ensure cleanup happens even on panic
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Client panic recovered", "panic", r)
+			err = fmt.Errorf("client panic: %v", r)
+		}
+	}()
+
 	// Auto-detect mode based on privileges
 	if cfg.Mode == "auto" {
 		if uproxy.IsRoot() {

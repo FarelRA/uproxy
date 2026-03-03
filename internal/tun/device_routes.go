@@ -15,9 +15,9 @@ func AddRoute(dest, ifaceName string) error {
 
 	switch runtime.GOOS {
 	case "linux":
-		args := []string{"route", "add", dest, "dev", ifaceName}
+		args := []string{"route", "replace", dest, "dev", ifaceName}
 		if isIPv6 {
-			args = []string{"-6", "route", "add", dest, "dev", ifaceName}
+			args = []string{"-6", "route", "replace", dest, "dev", ifaceName}
 		}
 		cmd := exec.Command("ip", args...)
 		if output, err := cmd.CombinedOutput(); err != nil {

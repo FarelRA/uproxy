@@ -66,15 +66,15 @@ func runCommand(cmd *exec.Cmd, errMsg string) error {
 }
 
 func configureLinux(name string, cfg *Config) error {
-	// Set IPv4 address
-	cmd := exec.Command("ip", "addr", "add", fmt.Sprintf("%s/%s", cfg.IP, cidrFromNetmask(cfg.Netmask)), "dev", name)
+	// Set IPv4 address (use replace to handle existing addresses)
+	cmd := exec.Command("ip", "addr", "replace", fmt.Sprintf("%s/%s", cfg.IP, cidrFromNetmask(cfg.Netmask)), "dev", name)
 	if err := runCommand(cmd, "failed to set IP address"); err != nil {
 		return err
 	}
 
-	// Set IPv6 address if provided
+	// Set IPv6 address if provided (use replace to handle existing addresses)
 	if cfg.IPv6 != "" {
-		cmd = exec.Command("ip", "-6", "addr", "add", cfg.IPv6, "dev", name)
+		cmd = exec.Command("ip", "-6", "addr", "replace", cfg.IPv6, "dev", name)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			slog.Warn("Failed to set IPv6 address", "error", err, "output", string(output))
 		} else {

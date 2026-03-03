@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net"
 	"os"
@@ -36,7 +37,15 @@ func serverCmd() *cobra.Command {
 	return cmd
 }
 
-func runServer(ctx context.Context, cfg *config.ServerConfig) error {
+func runServer(ctx context.Context, cfg *config.ServerConfig) (err error) {
+	// Ensure cleanup happens even on panic
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("Server panic recovered", "panic", r)
+			err = fmt.Errorf("server panic: %v", r)
+		}
+	}()
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
