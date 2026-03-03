@@ -21,7 +21,7 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 		return
 	}
 
-	dialer, err := createDialer("tcp", outbound, dialTimeout)
+	dialer, err := uproxy.CreateDialer("tcp", outbound, dialTimeout)
 	if err != nil {
 		common.LogError("ssh_tcp", "Failed to create dialer", "iface", outbound, "error", err)
 		return

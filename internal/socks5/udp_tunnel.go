@@ -213,27 +213,6 @@ func DialUDP(ctx context.Context, sshClient *ssh.Client, listenIP string) (net.A
 	return conn.LocalAddr(), &udpCloser{conn: conn, sessionMgr: sessionMgr}, nil
 }
 
-// createDialer creates a net.Dialer configured for the specified network type with optional interface binding.
-// Supports both "tcp" and "udp" network types.
-func createDialer(network, outbound string, dialTimeout time.Duration) (*net.Dialer, error) {
-	dialer := &net.Dialer{Timeout: dialTimeout}
-	if outbound != "" {
-		// Try to get IP from interface (supports both IPv4 and IPv6)
-		ip, err := uproxy.FirstIPOfInterface(outbound)
-		if err != nil {
-			return nil, err
-		}
-
-		switch network {
-		case "tcp":
-			dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
-		case "udp":
-			dialer.LocalAddr = &net.UDPAddr{IP: ip, Port: 0}
-		}
-	}
-	return dialer, nil
-}
-
 // withUDPBuffer executes a function with a pooled UDP buffer.
 func withUDPBuffer(fn func([]byte)) {
 	bufPtr := udpBufferPool.Get()
@@ -310,7 +289,7 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 		return
 	}
 
-	dialer, err := createDialer("udp", outbound, dialTimeout)
+	dialer, err := uproxy.CreateDialer("udp", outbound, dialTimeout)
 	if err != nil {
 		common.LogError("ssh_udp", "Failed to create dialer", "iface", outbound, "error", err)
 		return

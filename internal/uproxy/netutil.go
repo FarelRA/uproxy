@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"time"
 )
 
 // networkInterface abstracts net.Interface operations for testing
@@ -164,6 +165,27 @@ func BindAddrForInterface(addr, ifaceName string) (string, error) {
 		return net.JoinHostPort(ip.String(), port), nil
 	}
 	return addr, nil
+}
+
+// CreateDialer creates a net.Dialer configured for the specified network type with optional interface binding.
+// Supports both "tcp" and "udp" network types. If outbound interface is specified, binds the dialer to that interface's IP.
+func CreateDialer(network, outbound string, dialTimeout time.Duration) (*net.Dialer, error) {
+	dialer := &net.Dialer{Timeout: dialTimeout}
+	if outbound != "" {
+		// Try to get IP from interface (supports both IPv4 and IPv6)
+		ip, err := FirstIPOfInterface(outbound)
+		if err != nil {
+			return nil, err
+		}
+
+		switch network {
+		case "tcp":
+			dialer.LocalAddr = &net.TCPAddr{IP: ip, Port: 0}
+		case "udp":
+			dialer.LocalAddr = &net.UDPAddr{IP: ip, Port: 0}
+		}
+	}
+	return dialer, nil
 }
 
 // OptimizeUDPConn forces the OS-level UDP socket to allocate massive Read/Write
