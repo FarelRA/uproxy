@@ -344,8 +344,23 @@ func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 		}
 
 		// Write packet to shared TUN device - kernel routes it to internet
-		if err := manager.WritePacket(packet); err != nil {
-			slog.Debug("TUN write error", "client_ipv4", clientIPv4, "error", err)
+		// Retry with exponential backoff for transient errors
+		const maxRetries = 3
+		var lastErr error
+		for attempt := 0; attempt < maxRetries; attempt++ {
+			if err := manager.WritePacket(packet); err != nil {
+				lastErr = err
+				if attempt < maxRetries-1 {
+					time.Sleep(time.Duration(10*(attempt+1)) * time.Millisecond)
+					continue
+				}
+			} else {
+				lastErr = nil
+				break
+			}
+		}
+		if lastErr != nil {
+			slog.Warn("TUN write error after retries", "client_ipv4", clientIPv4, "error", lastErr)
 			continue
 		}
 

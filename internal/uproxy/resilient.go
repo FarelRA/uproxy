@@ -303,32 +303,28 @@ func (r *ResilientPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err erro
 }
 
 func (r *ResilientPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
-	c := r.getConn()
-	if c == nil {
-		if r.isClosed() {
-			return 0, net.ErrClosed
-		}
-		r.triggerReconnect()
-		return 0, errConnectionUnavailable
-	}
-
-	n, err = c.WriteTo(p, addr)
-	if err != nil {
-		if r.isClosed() {
-			return 0, net.ErrClosed
-		}
-		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+	for {
+		c, err := r.waitForConnection()
+		if err != nil {
 			return 0, err
 		}
-		r.triggerReconnect()
-		return 0, err
-	}
 
-	r.telemetry.RecordTx(n)
-	if r.monitor != nil {
-		r.monitor.RecordTx()
+		n, err := c.WriteTo(p, addr)
+		if err != nil {
+			if !r.shouldRetryError(err) {
+				return 0, err
+			}
+			r.triggerReconnect()
+			time.Sleep(reconnectRetryDelay)
+			continue
+		}
+
+		r.telemetry.RecordTx(n)
+		if r.monitor != nil {
+			r.monitor.RecordTx()
+		}
+		return n, nil
 	}
-	return n, nil
 }
 
 func (r *ResilientPacketConn) SetReadBuffer(bytes int) error {

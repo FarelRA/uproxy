@@ -135,8 +135,23 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 		m.mu.Unlock()
 
 		if cAddr != nil {
-			if _, err := m.conn.WriteToUDP(pkt, cAddr); err != nil {
-				common.LogDebug("socks5_udp", "Failed to write UDP packet to client", "error", err)
+			// Retry UDP writes with limited attempts to handle transient errors
+			const maxRetries = 3
+			var lastErr error
+			for attempt := 0; attempt < maxRetries; attempt++ {
+				if _, err := m.conn.WriteToUDP(pkt, cAddr); err != nil {
+					lastErr = err
+					if attempt < maxRetries-1 {
+						time.Sleep(10 * time.Millisecond)
+						continue
+					}
+				} else {
+					lastErr = nil
+					break
+				}
+			}
+			if lastErr != nil {
+				common.LogWarn("socks5_udp", "Failed to write UDP packet to client after retries", "error", lastErr)
 			}
 		}
 	}

@@ -2,6 +2,7 @@ package uproxy
 
 import (
 	"net"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -11,9 +12,19 @@ import (
 // It also holds logical local and remote addresses for accurate proxy routing metrics.
 type ChannelConn struct {
 	ssh.Channel
-	localAddr  net.Addr
-	remoteAddr net.Addr
+	localAddr     net.Addr
+	remoteAddr    net.Addr
+	readDeadline  time.Time
+	writeDeadline time.Time
+	mu            sync.Mutex
 }
+
+// timeoutError implements net.Error for timeout operations
+type timeoutError struct{}
+
+func (e timeoutError) Error() string   { return "i/o timeout" }
+func (e timeoutError) Timeout() bool   { return true }
+func (e timeoutError) Temporary() bool { return true }
 
 // NewChannelConn constructs a standard net.Conn compatible wrapper around an SSH channel.
 func NewChannelConn(channel ssh.Channel, local, remote net.Addr) *ChannelConn {
@@ -34,23 +45,95 @@ func (c *ChannelConn) RemoteAddr() net.Addr {
 	return c.remoteAddr
 }
 
-// SetDeadline is a no-op as SSH channels do not natively support IO deadlines.
-// The underlying SSH protocol handles timeouts at the transport layer.
-// This method exists to satisfy the net.Conn interface.
+// SetDeadline sets both read and write deadlines for the connection.
 func (c *ChannelConn) SetDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.readDeadline = t
+	c.writeDeadline = t
 	return nil
 }
 
-// SetReadDeadline is a no-op for SSH channels.
-// The underlying SSH protocol handles timeouts at the transport layer.
-// This method exists to satisfy the net.Conn interface.
+// SetReadDeadline sets the read deadline for the connection.
 func (c *ChannelConn) SetReadDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.readDeadline = t
 	return nil
 }
 
-// SetWriteDeadline is a no-op for SSH channels.
-// The underlying SSH protocol handles timeouts at the transport layer.
-// This method exists to satisfy the net.Conn interface.
+// SetWriteDeadline sets the write deadline for the connection.
 func (c *ChannelConn) SetWriteDeadline(t time.Time) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.writeDeadline = t
 	return nil
+}
+
+// Read reads data from the channel with deadline support.
+func (c *ChannelConn) Read(b []byte) (n int, err error) {
+	c.mu.Lock()
+	deadline := c.readDeadline
+	c.mu.Unlock()
+
+	if deadline.IsZero() {
+		return c.Channel.Read(b)
+	}
+
+	timeout := time.Until(deadline)
+	if timeout <= 0 {
+		return 0, &net.OpError{Op: "read", Net: "ssh", Err: timeoutError{}}
+	}
+
+	type result struct {
+		n   int
+		err error
+	}
+	ch := make(chan result, 1)
+
+	go func() {
+		n, err := c.Channel.Read(b)
+		ch <- result{n, err}
+	}()
+
+	select {
+	case res := <-ch:
+		return res.n, res.err
+	case <-time.After(timeout):
+		return 0, &net.OpError{Op: "read", Net: "ssh", Err: timeoutError{}}
+	}
+}
+
+// Write writes data to the channel with deadline support.
+func (c *ChannelConn) Write(b []byte) (n int, err error) {
+	c.mu.Lock()
+	deadline := c.writeDeadline
+	c.mu.Unlock()
+
+	if deadline.IsZero() {
+		return c.Channel.Write(b)
+	}
+
+	timeout := time.Until(deadline)
+	if timeout <= 0 {
+		return 0, &net.OpError{Op: "write", Net: "ssh", Err: timeoutError{}}
+	}
+
+	type result struct {
+		n   int
+		err error
+	}
+	ch := make(chan result, 1)
+
+	go func() {
+		n, err := c.Channel.Write(b)
+		ch <- result{n, err}
+	}()
+
+	select {
+	case res := <-ch:
+		return res.n, res.err
+	case <-time.After(timeout):
+		return 0, &net.OpError{Op: "write", Net: "ssh", Err: timeoutError{}}
+	}
 }

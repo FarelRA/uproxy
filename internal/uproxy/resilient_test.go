@@ -2,7 +2,6 @@ package uproxy
 
 import (
 	"context"
-	"errors"
 	"net"
 	"testing"
 	"time"
@@ -351,14 +350,37 @@ func TestResilientPacketConn_WriteToWhenConnNil(t *testing.T) {
 		telemetry:    telemetry.NewConnTelemetry("test", 1*time.Second),
 	}
 
-	// WriteTo when conn is nil should return a connection-unavailable error
+	// WriteTo when conn is nil should block waiting for connection (symmetric with ReadFrom)
+	// Cancel context to unblock it
 	testData := []byte("test")
-	n, err := r.WriteTo(testData, &net.UDPAddr{})
-	if !errors.Is(err, errConnectionUnavailable) {
-		t.Errorf("Expected errConnectionUnavailable, got %v", err)
-	}
-	if n != 0 {
-		t.Errorf("Expected to write 0 bytes, got %d", n)
+
+	// Start WriteTo in goroutine since it will block
+	done := make(chan struct{})
+	var n int
+	var err error
+	go func() {
+		n, err = r.WriteTo(testData, &net.UDPAddr{})
+		close(done)
+	}()
+
+	// Give it a moment to start blocking
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel context to unblock
+	cancel()
+
+	// Wait for WriteTo to return
+	select {
+	case <-done:
+		// Should return context error
+		if err == nil {
+			t.Error("Expected error after context cancellation, got nil")
+		}
+		if n != 0 {
+			t.Errorf("Expected to write 0 bytes, got %d", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WriteTo did not return after context cancellation")
 	}
 }
 
@@ -436,14 +458,20 @@ func TestResilientPacketConn_WriteToErrors(t *testing.T) {
 	}
 	r.mu.Unlock()
 
-	// Try to write - should trigger reconnect and return the write error
+	// Try to write - with new symmetric behavior, WriteTo should:
+	// 1. Detect the connection is closed
+	// 2. Wait for reconnection (blocks)
+	// 3. Succeed after reconnection
+	// This demonstrates uninterruptible behavior
 	testData := []byte("test")
 	n, err := r.WriteTo(testData, addr)
-	if err == nil {
-		t.Error("WriteTo should return error on failed write")
+
+	// Should succeed after automatic reconnection
+	if err != nil {
+		t.Errorf("WriteTo should succeed after reconnection, got error: %v", err)
 	}
-	if n != 0 {
-		t.Errorf("Expected to write 0 bytes, got %d", n)
+	if n != len(testData) {
+		t.Errorf("Expected to write %d bytes, got %d", len(testData), n)
 	}
 }
 
@@ -681,16 +709,37 @@ func TestResilientPacketConn_WriteToWhenConnNilButNotClosed(t *testing.T) {
 		telemetry:    telemetry.NewConnTelemetry("test", 1*time.Second),
 	}
 	// conn is nil, closed is false - simulates during reconnection
+	// New behavior: WriteTo blocks waiting for connection (symmetric with ReadFrom)
 
 	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:9999")
-	n, err := r.WriteTo([]byte("test"), addr)
 
-	// Should return a connection-unavailable error when conn is nil but not closed
-	if !errors.Is(err, errConnectionUnavailable) {
-		t.Errorf("Expected errConnectionUnavailable when conn is nil but not closed, got %v", err)
-	}
-	if n != 0 {
-		t.Errorf("Expected n=0, got %d", n)
+	// Start WriteTo in goroutine since it will block
+	done := make(chan struct{})
+	var n int
+	var err error
+	go func() {
+		n, err = r.WriteTo([]byte("test"), addr)
+		close(done)
+	}()
+
+	// Give it a moment to start blocking
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel context to unblock
+	cancel()
+
+	// Wait for WriteTo to return
+	select {
+	case <-done:
+		// Should return context error after cancellation
+		if err == nil {
+			t.Error("Expected error after context cancellation, got nil")
+		}
+		if n != 0 {
+			t.Errorf("Expected n=0, got %d", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("WriteTo did not return after context cancellation")
 	}
 }
 
