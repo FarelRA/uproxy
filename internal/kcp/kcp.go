@@ -810,7 +810,11 @@ func (kcp *KCP) flushSegments(seg *segment, ptr []byte, makeSpace func(int), cwn
 			segment.una = seg.una
 
 			need := IKCP_OVERHEAD + len(segment.data)
-			makeSpace(need)
+			// Check if we need to flush and reset ptr
+			if need > len(ptr) {
+				makeSpace(need)  // Flushes buffer and resets outer ptr
+				ptr = kcp.buffer // Reset local ptr to match
+			}
 			ptr = segment.encode(ptr)
 			copy(ptr, segment.data)
 			ptr = ptr[len(segment.data):]
