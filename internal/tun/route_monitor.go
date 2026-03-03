@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -38,6 +39,10 @@ func NewRouteMonitor(serverAddr, tunDevice string) *RouteMonitor {
 
 // Start sets up routes with retry and begins monitoring
 func (rm *RouteMonitor) Start() error {
+	if err := requireLinuxRouteOps(runtime.GOOS); err != nil {
+		return err
+	}
+
 	slog.Info("Starting route monitor")
 
 	// Setup routes using RouteManager (handles retry logic internally)
@@ -136,13 +141,10 @@ func (s *monitorState) routesChanged(gw, srcIP, ipv6gw, ipv6src string) bool {
 
 // checkAndUpdateRoutes checks if routes need updating and reconfigures if needed
 func (rm *RouteMonitor) checkAndUpdateRoutes(state *monitorState) {
-	gw, iface, srcIP, err := GetDefaultGateway()
+	gw, iface, srcIP, ipv6gw, ipv6iface, ipv6src, err := rm.getCurrentRouteState()
 	if err != nil {
-		// Default route might be temporarily missing
 		return
 	}
-
-	ipv6gw, ipv6iface, ipv6src, _ := GetDefaultIPv6Gateway()
 
 	// Check if anything changed
 	if !state.routesChanged(gw, srcIP, ipv6gw, ipv6src) {
@@ -178,6 +180,41 @@ func (rm *RouteMonitor) checkAndUpdateRoutes(state *monitorState) {
 
 	rm.logRoutesConfigured()
 	slog.Info("WAN route changed, routes updated")
+}
+
+// getCurrentRouteState returns current routing state for change detection.
+// It prefers the route to the VPN server to avoid false negatives after default route switches to TUN.
+func (rm *RouteMonitor) getCurrentRouteState() (gw, iface, srcIP, ipv6gw, ipv6iface, ipv6src string, err error) {
+	routeInfo := rm.routeManager.GetRouteInfo()
+	if routeInfo != nil {
+		if routeInfo.ServerIPv4 != "" {
+			serverGW, serverIface, serverSrc, routeErr := GetRouteToHost(routeInfo.ServerIPv4)
+			if routeErr == nil {
+				return serverGW, serverIface, serverSrc, "", "", "", nil
+			}
+			slog.Debug("Failed to get route to server IPv4, falling back to default route",
+				"server_ipv4", routeInfo.ServerIPv4,
+				"error", routeErr)
+		}
+
+		if routeInfo.ServerIPv6 != "" {
+			serverGW, serverIface, serverSrc, routeErr := GetRouteToHost(routeInfo.ServerIPv6)
+			if routeErr == nil {
+				return "", "", "", serverGW, serverIface, serverSrc, nil
+			}
+			slog.Debug("Failed to get route to server IPv6, falling back to default route",
+				"server_ipv6", routeInfo.ServerIPv6,
+				"error", routeErr)
+		}
+	}
+
+	gw, iface, srcIP, err = GetDefaultGateway()
+	if err != nil {
+		return "", "", "", "", "", "", err
+	}
+
+	ipv6gw, ipv6iface, ipv6src, _ = GetDefaultIPv6Gateway()
+	return gw, iface, srcIP, ipv6gw, ipv6iface, ipv6src, nil
 }
 
 // logRoutesConfigured logs the current route configuration

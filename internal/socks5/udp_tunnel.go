@@ -18,7 +18,7 @@ import (
 
 // parseSOCKS5UDPHeader parses the standard SOCKS5 UDP request header
 func parseSOCKS5UDPHeader(data []byte) (target string, payload []byte, header []byte, err error) {
-	if len(data) < 10 {
+	if len(data) < 4 {
 		return "", nil, nil, io.ErrUnexpectedEOF
 	}
 	if data[2] != 0 {
@@ -140,6 +140,16 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 	}
 }
 
+func (m *udpSessionManager) closeAllSessions() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for target, ch := range m.sessions {
+		_ = ch.Close()
+		delete(m.sessions, target)
+	}
+}
+
 // udpCloser wraps the UDP connection and waits for all session goroutines to complete
 type udpCloser struct {
 	conn       *net.UDPConn
@@ -147,6 +157,7 @@ type udpCloser struct {
 }
 
 func (c *udpCloser) Close() error {
+	c.sessionMgr.closeAllSessions()
 	err := c.conn.Close()
 	c.sessionMgr.wg.Wait()
 	return err
@@ -225,8 +236,8 @@ func createDialer(network, outbound string, dialTimeout time.Duration) (*net.Dia
 
 // withUDPBuffer executes a function with a pooled UDP buffer.
 func withUDPBuffer(fn func([]byte)) {
-	bufPtr := getUDPBuffer()
-	defer putUDPBuffer(bufPtr)
+	bufPtr := udpBufferPool.Get()
+	defer udpBufferPool.Put(bufPtr)
 	fn(*bufPtr)
 }
 
@@ -266,14 +277,26 @@ func forwardConnToChannel(conn net.Conn, channel ssh.Channel, rxBytes *int64, ti
 }
 
 // proxyUDPBidirectional handles bidirectional UDP forwarding between SSH channel and UDP connection.
-func proxyUDPBidirectional(channel ssh.Channel, conn net.Conn, targetAddr string) (txBytes, rxBytes int64) {
+func proxyUDPBidirectional(channel ssh.Channel, conn net.Conn) (txBytes, rxBytes int64) {
 	const udpTimeout = 5 * time.Minute
 
+	var wg sync.WaitGroup
+
 	// SSH -> Internet (TX)
-	go forwardChannelToConn(channel, conn, &txBytes, udpTimeout)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		forwardChannelToConn(channel, conn, &txBytes, udpTimeout)
+	}()
 
 	// Internet -> SSH (RX)
-	forwardConnToChannel(conn, channel, &rxBytes, udpTimeout)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		forwardConnToChannel(conn, channel, &rxBytes, udpTimeout)
+	}()
+
+	wg.Wait()
 	return
 }
 
@@ -307,7 +330,7 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 	start := time.Now()
 	common.LogInfo("socks5_udp", "UDP Stream started", "role", "server", "target", targetAddr)
 
-	txBytes, rxBytes := proxyUDPBidirectional(channel, conn, targetAddr)
+	txBytes, rxBytes := proxyUDPBidirectional(channel, conn)
 
 	common.LogInfo("socks5_udp", "UDP Stream closed", "role", "server", "target", targetAddr, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
 }

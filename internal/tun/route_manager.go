@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -12,6 +13,7 @@ import (
 type RouteManager struct {
 	serverAddr string
 	tunDevice  string
+	mu         sync.RWMutex
 	routeInfo  *RouteInfo
 	logger     *slog.Logger
 }
@@ -48,7 +50,7 @@ func (rm *RouteManager) SetupRoutes(ctx context.Context) error {
 
 		info, err := SetupClientRoutes(rm.serverAddr, rm.tunDevice)
 		if err == nil {
-			rm.routeInfo = info
+			rm.setRouteInfo(info)
 			rm.logger.Info("Routes configured successfully",
 				"tun_device", rm.tunDevice,
 				"server_ipv4", info.ServerIPv4,
@@ -69,9 +71,9 @@ func (rm *RouteManager) SetupRoutes(ctx context.Context) error {
 
 // CleanupRoutes removes routes for the TUN interface
 func (rm *RouteManager) CleanupRoutes() {
-	if rm.routeInfo != nil {
-		CleanupClientRoutes(rm.routeInfo)
-		rm.routeInfo = nil
+	if info := rm.GetRouteInfo(); info != nil {
+		CleanupClientRoutes(info)
+		rm.setRouteInfo(nil)
 	}
 }
 
@@ -88,7 +90,24 @@ func (rm *RouteManager) ResetRoutes(ctx context.Context) error {
 
 // GetRouteInfo returns the current route information
 func (rm *RouteManager) GetRouteInfo() *RouteInfo {
-	return rm.routeInfo
+	rm.mu.RLock()
+	defer rm.mu.RUnlock()
+	if rm.routeInfo == nil {
+		return nil
+	}
+	copy := *rm.routeInfo
+	return &copy
+}
+
+func (rm *RouteManager) setRouteInfo(info *RouteInfo) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if info == nil {
+		rm.routeInfo = nil
+		return
+	}
+	copy := *info
+	rm.routeInfo = &copy
 }
 
 // waitForTunDevice waits for the TUN device to become available

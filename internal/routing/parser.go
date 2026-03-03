@@ -94,11 +94,6 @@ func GetDefaultRoute() (*RouteInfo, error) {
 		return nil, err
 	}
 
-	// Default routes must have a gateway
-	if info.Gateway == "" {
-		return nil, fmt.Errorf("default route missing gateway")
-	}
-
 	return info, nil
 }
 

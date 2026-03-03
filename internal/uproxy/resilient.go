@@ -2,6 +2,7 @@ package uproxy
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
@@ -9,6 +10,14 @@ import (
 
 	"uproxy/internal/network"
 	"uproxy/internal/telemetry"
+)
+
+var errConnectionUnavailable = errors.New("connection unavailable")
+
+const (
+	defaultHealthCheckInterval = 250 * time.Millisecond
+	defaultFailureThreshold    = 30 * time.Second
+	defaultRecoverThreshold    = 500 * time.Millisecond
 )
 
 // FailureHandler is called when a connectivity failure is detected
@@ -34,12 +43,17 @@ type ResilientPacketConn struct {
 	// Extracted components
 	telemetry *telemetry.ConnTelemetry
 	monitor   *telemetry.ConnectivityMonitor
+
+	// Lifecycle management
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Duration, sockBuf int, serverMode bool) *ResilientPacketConn {
 	if reconnectInterval == 0 {
 		reconnectInterval = 1 * time.Second
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	r := &ResilientPacketConn{
 		bindAddr:     bindAddr,
 		iface:        iface,
@@ -47,6 +61,8 @@ func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Durat
 		sockBuf:      sockBuf,
 		serverMode:   serverMode,
 		telemetry:    telemetry.NewConnTelemetry("resilient", 30*time.Second),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 
 	r.reconnectSync()
@@ -54,10 +70,41 @@ func NewResilientPacketConn(bindAddr, iface string, reconnectInterval time.Durat
 	// Only run connectivity monitor for client mode
 	// Server doesn't need to rebind when clients die - clients reconnect instead
 	if !serverMode {
-		r.monitor = telemetry.NewConnectivityMonitor(r.triggerReconnect)
+		r.monitor = telemetry.NewConnectivityMonitorWithTimeouts(
+			r.triggerReconnect,
+			defaultHealthCheckInterval,
+			defaultFailureThreshold,
+			defaultRecoverThreshold,
+		)
 	}
 
 	return r
+}
+
+// SetIdleTimeout updates connectivity monitor failure threshold for client mode.
+// A non-positive timeout resets to the default threshold.
+func (r *ResilientPacketConn) SetIdleTimeout(idleTimeout time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.serverMode {
+		return
+	}
+
+	if idleTimeout <= 0 {
+		idleTimeout = defaultFailureThreshold
+	}
+
+	if r.monitor != nil {
+		r.monitor.Close()
+	}
+
+	r.monitor = telemetry.NewConnectivityMonitorWithTimeouts(
+		r.triggerReconnect,
+		defaultHealthCheckInterval,
+		idleTimeout,
+		defaultRecoverThreshold,
+	)
 }
 
 // SetFailureHandler sets a callback for handling connectivity failures
@@ -116,7 +163,9 @@ func (r *ResilientPacketConn) triggerReconnect() {
 	handler := r.failureHandler
 	r.mu.Unlock()
 
-	r.telemetry.RecordDrop()
+	if r.telemetry != nil {
+		r.telemetry.RecordDrop()
+	}
 
 	// Diagnose the failure and attempt to handle it
 	handled := r.runDiagnostics(diagnostics, handler)
@@ -165,13 +214,21 @@ func (r *ResilientPacketConn) reconnectSync() {
 					r.conn = conn
 					r.mu.Unlock()
 
-					r.telemetry.RecordRebind()
+					if r.telemetry != nil {
+						r.telemetry.RecordRebind()
+					}
 					slog.Info("Successfully bound resilient UDP socket", "layer", "resilient", "addr", udpAddr.String())
 					return
 				}
 			}
 		}
-		time.Sleep(interval)
+
+		// Context-aware sleep to allow cancellation
+		select {
+		case <-r.ctx.Done():
+			return
+		case <-time.After(interval):
+		}
 	}
 }
 
@@ -183,6 +240,9 @@ func (r *ResilientPacketConn) getConn() *net.UDPConn {
 
 // waitForConnection blocks until a connection is available or the conn is closed
 func (r *ResilientPacketConn) waitForConnection() (*net.UDPConn, error) {
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
 	for {
 		c := r.getConn()
 		if c != nil {
@@ -191,7 +251,12 @@ func (r *ResilientPacketConn) waitForConnection() (*net.UDPConn, error) {
 		if r.isClosed() {
 			return nil, net.ErrClosed
 		}
-		time.Sleep(100 * time.Millisecond)
+
+		select {
+		case <-r.ctx.Done():
+			return nil, net.ErrClosed
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -238,7 +303,8 @@ func (r *ResilientPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error
 		if r.isClosed() {
 			return 0, net.ErrClosed
 		}
-		return len(p), nil
+		r.triggerReconnect()
+		return 0, errConnectionUnavailable
 	}
 
 	n, err = c.WriteTo(p, addr)
@@ -250,7 +316,7 @@ func (r *ResilientPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error
 			return 0, err
 		}
 		r.triggerReconnect()
-		return len(p), nil
+		return 0, err
 	}
 
 	r.telemetry.RecordTx(n)
@@ -287,6 +353,9 @@ func (r *ResilientPacketConn) Close() error {
 		return nil
 	}
 	r.closed = true
+
+	// Cancel context to signal all goroutines
+	r.cancel()
 
 	// Close extracted components
 	if r.telemetry != nil {

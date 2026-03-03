@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -21,10 +22,15 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 	defer a.Close()
 	defer b.Close()
 
+	if bufSize <= 0 {
+		bufSize = DefaultTCPBufSize
+	}
+
 	start := time.Now()
 	slog.Info("Stream started", "layer", "proxy", "role", role, "target", target)
 
-	var txBytes, rxBytes int64
+	var txBytes atomic.Int64
+	var rxBytes atomic.Int64
 
 	g, gctx := errgroup.WithContext(ctx)
 
@@ -36,11 +42,11 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 		default:
 		}
 		buf := make([]byte, bufSize)
-		n, err := io.CopyBuffer(a, b, buf)
-		txBytes = n
+		n, err := io.CopyBuffer(b, a, buf)
+		txBytes.Store(n)
 
-		if closeErr := a.Close(); closeErr != nil {
-			slog.Debug("Failed to close connection A", "layer", "proxy", "error", closeErr)
+		if closeErr := b.Close(); closeErr != nil {
+			slog.Debug("Failed to close connection B", "layer", "proxy", "error", closeErr)
 		}
 		return err
 	})
@@ -53,11 +59,11 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 		default:
 		}
 		buf := make([]byte, bufSize)
-		n, err := io.CopyBuffer(b, a, buf)
-		rxBytes = n
+		n, err := io.CopyBuffer(a, b, buf)
+		rxBytes.Store(n)
 
-		if closeErr := b.Close(); closeErr != nil {
-			slog.Debug("Failed to close connection B", "layer", "proxy", "error", closeErr)
+		if closeErr := a.Close(); closeErr != nil {
+			slog.Debug("Failed to close connection A", "layer", "proxy", "error", closeErr)
 		}
 		return err
 	})
@@ -69,8 +75,8 @@ func ProxyBidi(ctx context.Context, a, b io.ReadWriteCloser, role, target string
 		"layer", "proxy",
 		"role", role,
 		"target", target,
-		"tx_bytes", txBytes,
-		"rx_bytes", rxBytes,
+		"tx_bytes", txBytes.Load(),
+		"rx_bytes", rxBytes.Load(),
 		"duration", duration.String(),
 		"error", err,
 	)

@@ -2,6 +2,7 @@ package tun
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -222,15 +223,14 @@ var ErrTUNNotSupported = fmt.Errorf("server does not support TUN mode")
 
 // readServerAssignedIPs reads the IP addresses assigned by the server
 func readServerAssignedIPs(channel ssh.Channel) (ipv4 string, ipv6 string, err error) {
-	// Read IP assignment message from server
-	// Format: "IPv4:x.x.x.x\n" or "IPv4:x.x.x.x\nIPv6:xxxx::x\n"
-	buf := make([]byte, 256)
-	n, err := channel.Read(buf)
+	// Read framed IP assignment message from server.
+	// Format payload: "IPv4:x.x.x.x\n" or "IPv4:x.x.x.x\nIPv6:xxxx::x\n"
+	payload, err := framing.ReadFramed(channel)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to read IP assignment: %w", err)
 	}
 
-	msg := string(buf[:n])
+	msg := string(payload)
 
 	// Check for error message
 	if strings.HasPrefix(msg, "ERROR:") {
@@ -258,9 +258,8 @@ func readServerAssignedIPs(channel ssh.Channel) (ipv4 string, ipv6 string, err e
 func openTUNChannel(client *ssh.Client) (ssh.Channel, error) {
 	channel, err := uproxy.OpenSSHChannel(client, ChannelTypeTUN)
 	if err != nil {
-		// Check if the error is due to unknown channel type (server doesn't support TUN)
-		if strings.Contains(err.Error(), "unknown channel type") ||
-			strings.Contains(err.Error(), "rejected") {
+		var openErr *ssh.OpenChannelError
+		if errors.As(err, &openErr) && openErr.Reason == ssh.UnknownChannelType {
 			return nil, ErrTUNNotSupported
 		}
 		return nil, err
@@ -277,7 +276,9 @@ func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 	route, clientIPv4, clientIPv6, err := manager.AllocateAndNotifyClient(channel)
 	if err != nil {
 		slog.Error("Failed to setup client", "error", err)
-		channel.Write([]byte(fmt.Sprintf("ERROR: %v\n", err)))
+		if writeErr := framing.WriteFramed(channel, []byte(fmt.Sprintf("ERROR: %v\n", err))); writeErr != nil {
+			slog.Debug("Failed to write TUN setup error to channel", "error", writeErr)
+		}
 		return
 	}
 	defer manager.UnregisterClient(clientIPv4, clientIPv6)

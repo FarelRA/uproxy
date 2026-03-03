@@ -1,9 +1,11 @@
 package tun
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"uproxy/internal/network"
@@ -46,8 +48,21 @@ func ResolveServerIPs(serverAddr string) (ipv4, ipv6 string, err error) {
 	return network.ResolveToIPv4AndIPv6(serverAddr)
 }
 
+// GetRouteToHost returns route information for a specific destination host.
+func GetRouteToHost(host string) (gateway, iface, srcIP string, err error) {
+	info, err := routing.GetRouteToHost(context.Background(), host)
+	if err != nil {
+		return "", "", "", err
+	}
+	return info.Gateway, info.Interface, info.SrcIP, nil
+}
+
 // SetupClientRoutes sets up routing to send all traffic through TUN
 func SetupClientRoutes(serverAddr, tunDevice string) (*RouteInfo, error) {
+	if err := requireLinuxRouteOps(runtime.GOOS); err != nil {
+		return nil, err
+	}
+
 	info := &RouteInfo{
 		TunDevice: tunDevice,
 	}
@@ -184,6 +199,11 @@ func deleteRoute(args []string, description string) {
 }
 
 func CleanupClientRoutes(info *RouteInfo) {
+	if err := requireLinuxRouteOps(runtime.GOOS); err != nil {
+		slog.Debug("Skipping client route cleanup on unsupported platform", "error", err)
+		return
+	}
+
 	if info == nil {
 		return
 	}
@@ -195,10 +215,12 @@ func CleanupClientRoutes(info *RouteInfo) {
 
 	// Remove default route through TUN (IPv4)
 	deleteRoute([]string{"route", "del", "default", "dev", info.TunDevice}, "default IPv4 route")
+	restoreDefaultIPv4Route(info)
 
 	// Remove default route through TUN (IPv6)
 	if info.OriginalIPv6GW != "" {
 		deleteRoute([]string{"-6", "route", "del", "default", "dev", info.TunDevice}, "default IPv6 route")
+		restoreDefaultIPv6Route(info)
 	}
 
 	// Remove server IPv4 exception route
@@ -222,4 +244,34 @@ func CleanupClientRoutes(info *RouteInfo) {
 	}
 
 	slog.Info("Client routes cleaned up")
+}
+
+func restoreDefaultIPv4Route(info *RouteInfo) {
+	if info.OriginalGW == "" || info.OriginalIface == "" {
+		return
+	}
+
+	args := []string{"route", "replace", "default", "via", info.OriginalGW, "dev", info.OriginalIface}
+	if info.OriginalSrcIP != "" {
+		args = append(args, "src", info.OriginalSrcIP)
+	}
+
+	if err := addRouteWithRetry(args, "restore default IPv4 route", true); err != nil {
+		slog.Warn("Failed to restore default IPv4 route", "error", err)
+	}
+}
+
+func restoreDefaultIPv6Route(info *RouteInfo) {
+	if info.OriginalIPv6GW == "" || info.OriginalIPv6Iface == "" {
+		return
+	}
+
+	args := []string{"-6", "route", "replace", "default", "via", info.OriginalIPv6GW, "dev", info.OriginalIPv6Iface}
+	if info.OriginalIPv6SrcIP != "" {
+		args = append(args, "src", info.OriginalIPv6SrcIP)
+	}
+
+	if err := addRouteWithRetry(args, "restore default IPv6 route", false); err != nil {
+		slog.Warn("Failed to restore default IPv6 route", "error", err)
+	}
 }

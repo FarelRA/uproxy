@@ -38,7 +38,6 @@ package kcp
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/binary"
 	"io"
 	"net"
@@ -70,6 +69,8 @@ var (
 	errInvalidOperation = errors.New("invalid operation")
 	errTimeout          = timeoutError{}
 	errNotOwner         = errors.New("not the owner of this connection")
+	errNoPacketConn     = errors.New("packet connection is nil")
+	errNoRemoteAddr     = errors.New("remote address is nil")
 )
 
 // timeoutError implements net.Error
@@ -103,7 +104,6 @@ type (
 		wd         atomic.Value // write deadline
 		ackNoDelay bool         // send ack immediately for each incoming packet(testing purpose)
 		writeDelay bool         // delay kcp.flush() for Write() for bulk transfer
-		dup        int          // duplicate udp packets(testing purpose)
 
 		// notifications
 		die          chan struct{} // notify current session has Closed
@@ -466,15 +466,6 @@ func (s *UDPSession) SetACKNoDelay(nodelay bool) {
 	s.mu.Unlock()
 }
 
-// (deprecated)
-//
-// SetDUP duplicates udp packets for kcp output.
-func (s *UDPSession) SetDUP(dup int) {
-	s.mu.Lock()
-	s.dup = dup
-	s.mu.Unlock()
-}
-
 // SetNoDelay calls nodelay() of kcp
 // https://github.com/skywind3000/kcp/blob/master/README.en.md#protocol-configuration
 func (s *UDPSession) SetDeadLink(deadlink uint32) {
@@ -600,15 +591,6 @@ func (s *UDPSession) postProcess() {
 			msg.Buffers = [][]byte{buf}
 			bytesToSend += len(buf)
 			txqueue = append(txqueue, msg)
-
-			// dup copies for testing if set
-			for i := 0; i < s.dup; i++ {
-				bts := defaultBufferPool.Get()[:len(buf)]
-				copy(bts, buf)
-				msg.Buffers = [][]byte{bts}
-				bytesToSend += len(bts)
-				txqueue = append(txqueue, msg)
-			}
 
 			// transmit when chPostProcessing is empty or we've reached max batch size
 			if len(s.chPostProcessing) == 0 || len(txqueue) >= maxBatchSize {
@@ -955,42 +937,4 @@ func (l *Listener) closeSession(conv uint32) (ret bool) {
 // Addr returns the listener's network address, The Addr returned is shared by all invocations of Addr, so do not modify it.
 func (l *Listener) Addr() net.Addr {
 	return l.conn.LocalAddr()
-}
-
-// ServeConn serves KCP protocol for a single packet connection.
-func ServeConn(conn net.PacketConn) (*Listener, error) {
-	return serveConn(conn, false)
-}
-
-func serveConn(conn net.PacketConn, ownConn bool) (*Listener, error) {
-	l := new(Listener)
-	l.conn = conn
-	l.ownConn = ownConn
-	l.sessions = make(map[uint32]*UDPSession)
-	l.chAccepts = make(chan *UDPSession, acceptBacklog)
-	l.die = make(chan struct{})
-	l.chSocketReadError = make(chan struct{})
-	go l.monitor()
-	return l, nil
-}
-
-// NewConn3 establishes a session and talks KCP protocol over a packet connection.
-func NewConn3(convid uint32, raddr net.Addr, conn net.PacketConn) (*UDPSession, error) {
-	return newUDPSession(convid, nil, conn, false, raddr), nil
-}
-
-// NewConn2 establishes a session and talks KCP protocol over a packet connection.
-func NewConn2(raddr net.Addr, conn net.PacketConn) (*UDPSession, error) {
-	var convid uint32
-	binary.Read(rand.Reader, binary.LittleEndian, &convid)
-	return NewConn3(convid, raddr, conn)
-}
-
-// NewConn establishes a session and talks KCP protocol over a packet connection.
-func NewConn(raddr string, conn net.PacketConn) (*UDPSession, error) {
-	udpaddr, err := net.ResolveUDPAddr("udp", raddr)
-	if err != nil {
-		return nil, errors.WithStack(err)
-	}
-	return NewConn2(udpaddr, conn)
 }

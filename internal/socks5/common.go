@@ -2,9 +2,12 @@ package socks5
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"net"
 )
+
+var errTargetHeaderTooLong = errors.New("target header too long")
 
 // SSH Channel names used for multiplexing
 const (
@@ -15,6 +18,9 @@ const (
 // WriteTargetHeader writes the target address to the SSH channel during initialization
 func WriteTargetHeader(w io.Writer, target string) error {
 	targetBytes := []byte(target)
+	if len(targetBytes) > 0xFFFF {
+		return errTargetHeaderTooLong
+	}
 	var lenBuf [2]byte
 	binary.BigEndian.PutUint16(lenBuf[:], uint16(len(targetBytes)))
 	if _, err := w.Write(lenBuf[:]); err != nil {
@@ -54,6 +60,9 @@ func parseSOCKS5Address(data []byte, atyp byte, idx int) (host string, newIdx in
 			return "", idx, io.ErrUnexpectedEOF
 		}
 		l := int(data[idx])
+		if l == 0 {
+			return "", idx, net.InvalidAddrError("empty domain")
+		}
 		idx++
 		if len(data) < idx+l {
 			return "", idx, io.ErrUnexpectedEOF

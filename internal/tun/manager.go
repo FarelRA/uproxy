@@ -29,6 +29,27 @@ type TUNManager struct {
 	cancel context.CancelFunc
 }
 
+func buildIPv4NATSubnet(ipv4, netmask string) string {
+	if ipv4 == "" || netmask == "" {
+		return ""
+	}
+
+	ip := net.ParseIP(ipv4).To4()
+	maskIP := net.ParseIP(netmask).To4()
+	if ip == nil || maskIP == nil {
+		return ""
+	}
+
+	mask := net.IPv4Mask(maskIP[0], maskIP[1], maskIP[2], maskIP[3])
+	ones, bits := mask.Size()
+	if bits != 32 {
+		return ""
+	}
+
+	networkIP := ip.Mask(mask)
+	return fmt.Sprintf("%s/%d", networkIP.String(), ones)
+}
+
 // ClientRoute holds routing information for a single client.
 type ClientRoute struct {
 	IPv4    string
@@ -42,7 +63,7 @@ func NewTUNManager(cfg *Config, outbound string, autoRoute bool) (*TUNManager, e
 	// Create TUN device
 	device, err := CreateTUN(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create TUN device: %v", err)
+		return nil, fmt.Errorf("failed to create TUN device: %w", err)
 	}
 
 	// Conditionally enable IP forwarding and NAT
@@ -50,20 +71,17 @@ func NewTUNManager(cfg *Config, outbound string, autoRoute bool) (*TUNManager, e
 		// Enable IP forwarding
 		if err := EnableIPForwarding(); err != nil {
 			device.Close()
-			return nil, fmt.Errorf("failed to enable IP forwarding: %v", err)
+			return nil, fmt.Errorf("failed to enable IP forwarding: %w", err)
 		}
 
 		// Set up NAT/masquerading with subnet filtering
 		// Construct subnet strings for NAT rules
-		ipv4Subnet := ""
-		if cfg.IP != "" && cfg.Netmask != "" {
-			ipv4Subnet = cfg.IP + "/" + cfg.Netmask
-		}
+		ipv4Subnet := buildIPv4NATSubnet(cfg.IP, cfg.Netmask)
 		ipv6Subnet := cfg.IPv6 // Already includes /64
 
 		if err := EnableNAT(device.Name(), outbound, ipv4Subnet, ipv6Subnet); err != nil {
 			device.Close()
-			return nil, fmt.Errorf("failed to setup NAT: %v", err)
+			return nil, fmt.Errorf("failed to setup NAT: %w", err)
 		}
 	} else {
 		slog.Info("Auto-route disabled, skipping NAT/forwarding setup")
@@ -112,7 +130,7 @@ func (m *TUNManager) AllocateAndNotifyClient(channel ssh.Channel) (*ClientRoute,
 	if clientIPv6 != "" {
 		ipMsg += fmt.Sprintf("IPv6:%s\n", clientIPv6)
 	}
-	if _, err := channel.Write([]byte(ipMsg)); err != nil {
+	if err := framing.WriteFramed(channel, []byte(ipMsg)); err != nil {
 		// Release the allocated IPs since we failed to notify
 		m.allocator.ReleaseIP(clientIPv4, clientIPv6)
 		return nil, "", "", fmt.Errorf("failed to send IPs to client: %w", err)
@@ -278,18 +296,7 @@ func (m *TUNManager) cleanupNAT() {
 	}
 
 	// Construct subnet strings from config
-	ipv4Subnet := ""
-	if m.config.IP != "" && m.config.Netmask != "" {
-		// Parse IP and netmask to get network address
-		ip := net.ParseIP(m.config.IP)
-		if ip != nil {
-			ip = ip.To4()
-			if ip != nil && len(ip) >= 3 {
-				// Convert netmask to CIDR prefix length
-				ipv4Subnet = fmt.Sprintf("%d.%d.%d.0%s", ip[0], ip[1], ip[2], m.config.Netmask)
-			}
-		}
-	}
+	ipv4Subnet := buildIPv4NATSubnet(m.config.IP, m.config.Netmask)
 
 	ipv6Subnet := ""
 	if m.config.IPv6 != "" {

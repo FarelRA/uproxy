@@ -3,11 +3,14 @@ package socks5
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"uproxy/internal/common"
 	"uproxy/internal/config"
@@ -17,8 +20,10 @@ import (
 // SOCKS5 error codes
 const (
 	replySuccess             = 0x00
-	replyGeneralFailure      = 0x05
+	replyGeneralFailure      = config.SOCKS5ReplyGeneralFailure
 	replyCommandNotSupported = 0x07
+	replyAddrTypeNotSupport  = 0x08
+	replyNoAcceptableMethods = 0xff
 )
 
 // maxConcurrentConnections limits the number of concurrent SOCKS5 connections
@@ -45,7 +50,7 @@ func writeSOCKS5Success(conn net.Conn, bindAddr string) error {
 }
 
 // ServeSOCKS5 binds the local listening port and dispatches SOCKS5 requests
-func ServeSOCKS5(ctx context.Context, listenAddr string, dialTCP func(context.Context, string) (net.Conn, error), dialUDP func(context.Context) (net.Addr, io.Closer, error)) error {
+func ServeSOCKS5(ctx context.Context, listenAddr string, tcpBufSize int, dialTCP func(context.Context, string) (net.Conn, error), dialUDP func(context.Context) (net.Addr, io.Closer, error)) error {
 	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return err
@@ -77,6 +82,11 @@ func ServeSOCKS5(ctx context.Context, listenAddr string, dialTCP func(context.Co
 			case <-ctx.Done():
 				return nil
 			default:
+				if errors.Is(err, net.ErrClosed) {
+					return nil
+				}
+				common.LogWarn("socks5", "SOCKS5 accept failed", "error", err)
+				time.Sleep(100 * time.Millisecond)
 				continue
 			}
 		}
@@ -87,7 +97,7 @@ func ServeSOCKS5(ctx context.Context, listenAddr string, dialTCP func(context.Co
 			wg.Add(1)
 			go func(c net.Conn) {
 				defer func() { <-semaphore }()
-				handleSOCKS5Client(ctx, c, dialTCP, dialUDP, &wg)
+				handleSOCKS5Client(ctx, c, tcpBufSize, dialTCP, dialUDP, &wg)
 			}(conn)
 		default:
 			// Connection limit reached, reject connection
@@ -97,7 +107,7 @@ func ServeSOCKS5(ctx context.Context, listenAddr string, dialTCP func(context.Co
 	}
 }
 
-func handleSOCKS5Client(ctx context.Context, conn net.Conn, dialTCP func(context.Context, string) (net.Conn, error), dialUDP func(context.Context) (net.Addr, io.Closer, error), wg *sync.WaitGroup) {
+func handleSOCKS5Client(ctx context.Context, conn net.Conn, tcpBufSize int, dialTCP func(context.Context, string) (net.Conn, error), dialUDP func(context.Context) (net.Addr, io.Closer, error), wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer conn.Close()
 	clientAddr := conn.RemoteAddr().String()
@@ -108,17 +118,25 @@ func handleSOCKS5Client(ctx context.Context, conn net.Conn, dialTCP func(context
 
 	cmd, targetAddr, err := parseSOCKS5Request(conn)
 	if err != nil {
+		_ = writeSOCKS5Error(conn, mapRequestErrorToReplyCode(err))
 		return
 	}
 
 	switch cmd {
 	case config.SOCKS5CommandConnect: // CONNECT (TCP)
-		handleConnectCommand(ctx, conn, targetAddr, clientAddr, dialTCP)
+		handleConnectCommand(ctx, conn, targetAddr, clientAddr, tcpBufSize, dialTCP)
 	case config.SOCKS5CommandUDPAssociate: // UDP ASSOCIATE
 		handleUDPAssociate(ctx, conn, clientAddr, dialUDP)
 	default: // Command not supported
 		_ = writeSOCKS5Error(conn, replyCommandNotSupported)
 	}
+}
+
+func mapRequestErrorToReplyCode(err error) byte {
+	if strings.Contains(err.Error(), "unsupported address type") {
+		return replyAddrTypeNotSupport
+	}
+	return replyGeneralFailure
 }
 
 func performSOCKS5Handshake(conn net.Conn) error {
@@ -127,7 +145,7 @@ func performSOCKS5Handshake(conn net.Conn) error {
 		return err
 	}
 	if buf[0] != 0x05 {
-		return io.ErrUnexpectedEOF
+		return fmt.Errorf("invalid SOCKS version: %d", buf[0])
 	}
 
 	methods := make([]byte, buf[1])
@@ -135,9 +153,17 @@ func performSOCKS5Handshake(conn net.Conn) error {
 		return err
 	}
 
-	// We support 'No Auth' (0x00)
-	_, err := conn.Write([]byte{0x05, 0x00})
-	return err
+	for _, method := range methods {
+		if method == 0x00 {
+			_, err := conn.Write([]byte{0x05, 0x00})
+			return err
+		}
+	}
+
+	if _, err := conn.Write([]byte{0x05, replyNoAcceptableMethods}); err != nil {
+		return err
+	}
+	return fmt.Errorf("no acceptable authentication method")
 }
 
 func parseSOCKS5Request(conn net.Conn) (cmd byte, targetAddr string, err error) {
@@ -146,7 +172,11 @@ func parseSOCKS5Request(conn net.Conn) (cmd byte, targetAddr string, err error) 
 		return
 	}
 	if req[0] != 0x05 {
-		err = io.ErrUnexpectedEOF
+		err = fmt.Errorf("invalid SOCKS version: %d", req[0])
+		return
+	}
+	if req[2] != 0x00 {
+		err = fmt.Errorf("invalid reserved field: %d", req[2])
 		return
 	}
 
@@ -223,7 +253,7 @@ func readSOCKS5Port(conn net.Conn) (uint16, error) {
 	return binary.BigEndian.Uint16(portBuf[:]), nil
 }
 
-func handleConnectCommand(ctx context.Context, conn net.Conn, targetAddr, clientAddr string, dialTCP func(context.Context, string) (net.Conn, error)) {
+func handleConnectCommand(ctx context.Context, conn net.Conn, targetAddr, clientAddr string, tcpBufSize int, dialTCP func(context.Context, string) (net.Conn, error)) {
 	common.LogDebug("socks5", "SOCKS5 TCP request", "client", clientAddr, "target", targetAddr)
 	remote, err := dialTCP(ctx, targetAddr)
 	if err != nil {
@@ -237,7 +267,7 @@ func handleConnectCommand(ctx context.Context, conn net.Conn, targetAddr, client
 	_ = writeSOCKS5Success(conn, targetAddr)
 
 	// Delegate to ProxyBidi for telemetry
-	uproxy.ProxyBidi(ctx, conn, remote, "socks5_client_tcp", targetAddr, config.DefaultTCPBufSize)
+	uproxy.ProxyBidi(ctx, conn, remote, "socks5_client_tcp", targetAddr, tcpBufSize)
 }
 
 func handleUDPAssociate(ctx context.Context, conn net.Conn, clientAddr string, dialUDP func(context.Context) (net.Addr, io.Closer, error)) {
@@ -250,8 +280,15 @@ func handleUDPAssociate(ctx context.Context, conn net.Conn, clientAddr string, d
 	}
 	defer udpCloser.Close()
 
-	udpIP := udpAddr.(*net.UDPAddr).IP
-	udpPort := uint16(udpAddr.(*net.UDPAddr).Port)
+	udpBindAddr, ok := udpAddr.(*net.UDPAddr)
+	if !ok {
+		common.LogError("socks5", "UDP Associate returned non-UDP address", "client", clientAddr, "addr_type", fmt.Sprintf("%T", udpAddr))
+		_ = writeSOCKS5Error(conn, replyGeneralFailure)
+		return
+	}
+
+	udpIP := udpBindAddr.IP
+	udpPort := uint16(udpBindAddr.Port)
 
 	var rep []byte
 	if ipv4 := udpIP.To4(); ipv4 != nil {
@@ -269,5 +306,16 @@ func handleUDPAssociate(ctx context.Context, conn net.Conn, clientAddr string, d
 	}
 
 	// SOCKS5 spec: When the TCP connection closes, the UDP association dies.
-	io.Copy(io.Discard, conn)
+	copyDone := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(io.Discard, conn)
+		close(copyDone)
+	}()
+
+	select {
+	case <-copyDone:
+	case <-ctx.Done():
+		_ = conn.Close()
+		<-copyDone
+	}
 }

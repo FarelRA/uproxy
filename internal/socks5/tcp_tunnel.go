@@ -8,12 +8,11 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"uproxy/internal/common"
-	"uproxy/internal/config"
 	"uproxy/internal/uproxy"
 )
 
 // HandleTCP runs on the server side to handle a incoming TCP SSH channel.
-func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, outbound string, dialTimeout time.Duration) {
+func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, outbound string, dialTimeout time.Duration, tcpBufSize int) {
 	defer channel.Close()
 
 	targetAddr, err := ReadTargetHeader(channel)
@@ -38,7 +37,7 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 	uproxy.OptimizeTCPConn(targetConn)
 
 	// Proxy bidirectionally with zero-copy pools and full telemetry
-	uproxy.ProxyBidi(ctx, uproxy.NewChannelConn(channel, targetConn.LocalAddr(), remoteAddr), targetConn, "socks5_server_tcp", targetAddr, config.DefaultTCPBufSize)
+	uproxy.ProxyBidi(ctx, uproxy.NewChannelConn(channel, targetConn.LocalAddr(), remoteAddr), targetConn, "socks5_server_tcp", targetAddr, tcpBufSize)
 }
 
 // DialTCP runs on the client side to establish a new TCP SSH channel to the server.
@@ -50,7 +49,7 @@ func DialTCP(ctx context.Context, sshClient *ssh.Client, targetAddr string) (net
 
 	if err := WriteTargetHeader(channel, targetAddr); err != nil {
 		channel.Close()
-		return nil, fmt.Errorf("failed to write target header: %v", err)
+		return nil, fmt.Errorf("failed to write target header: %w", err)
 	}
 
 	return uproxy.NewChannelConn(channel, nil, nil), nil
