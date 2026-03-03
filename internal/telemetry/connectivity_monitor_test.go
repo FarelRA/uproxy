@@ -1,15 +1,16 @@
 package telemetry
 
 import (
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 // TestConnectivityMonitor_RecordActivity tests recording TX/RX activity
 func TestConnectivityMonitor_RecordActivity(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	onFailure := func() {
-		called = true
+		called.Store(true)
 	}
 
 	mon := NewConnectivityMonitor(onFailure)
@@ -34,16 +35,16 @@ func TestConnectivityMonitor_RecordActivity(t *testing.T) {
 
 	// Should not trigger failure with recent activity
 	time.Sleep(300 * time.Millisecond)
-	if called {
+	if called.Load() {
 		t.Error("onFailure should not be called with recent activity")
 	}
 }
 
 // TestConnectivityMonitor_IdleTimeout tests idle timeout scenario
 func TestConnectivityMonitor_IdleTimeout(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	onFailure := func() {
-		called = true
+		called.Store(true)
 	}
 
 	mon := NewConnectivityMonitor(onFailure)
@@ -58,16 +59,16 @@ func TestConnectivityMonitor_IdleTimeout(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 
 	// Should NOT trigger failure for complete idle (this is normal)
-	if called {
+	if called.Load() {
 		t.Error("onFailure should not be called for complete idle")
 	}
 }
 
 // TestConnectivityMonitor_RecentTxNoRx tests recent TX but no RX scenario
 func TestConnectivityMonitor_RecentTxNoRx(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	onFailure := func() {
-		called = true
+		called.Store(true)
 	}
 
 	mon := NewConnectivityMonitor(onFailure)
@@ -81,7 +82,7 @@ func TestConnectivityMonitor_RecentTxNoRx(t *testing.T) {
 	// Wait for monitor to detect
 	time.Sleep(300 * time.Millisecond)
 
-	if !called {
+	if !called.Load() {
 		t.Error("onFailure should be called for recent TX but no RX")
 	}
 }
@@ -102,9 +103,9 @@ func TestConnectivityMonitor_NilCallback(t *testing.T) {
 
 // TestConnectivityMonitor_Close tests that Close stops the monitor
 func TestConnectivityMonitor_Close(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
 	onFailure := func() {
-		callCount++
+		callCount.Add(1)
 	}
 
 	mon := NewConnectivityMonitor(onFailure)
@@ -116,23 +117,23 @@ func TestConnectivityMonitor_Close(t *testing.T) {
 
 	// Wait for first detection
 	time.Sleep(300 * time.Millisecond)
-	firstCount := callCount
+	firstCount := callCount.Load()
 
 	// Close the monitor
 	mon.Close()
 
 	// Wait and verify no more calls
 	time.Sleep(300 * time.Millisecond)
-	if callCount != firstCount {
+	if callCount.Load() != firstCount {
 		t.Error("onFailure should not be called after Close")
 	}
 }
 
 // TestConnectivityMonitor_CompleteIdle tests the scenario where both TX and RX are idle
 func TestConnectivityMonitor_CompleteIdle(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	onFailure := func() {
-		called = true
+		called.Store(true)
 	}
 
 	// Use short timeouts for testing
@@ -149,16 +150,16 @@ func TestConnectivityMonitor_CompleteIdle(t *testing.T) {
 	mon.Close()
 
 	// Should not trigger failure when completely idle
-	if called {
+	if called.Load() {
 		t.Error("onFailure should not be called when completely idle")
 	}
 }
 
 // TestConnectivityMonitor_BothIdle tests when both TX and RX are idle beyond timeout
 func TestConnectivityMonitor_BothIdle(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	onFailure := func() {
-		called = true
+		called.Store(true)
 	}
 
 	// Use very short timeouts for testing
@@ -170,16 +171,16 @@ func TestConnectivityMonitor_BothIdle(t *testing.T) {
 	mon.Close()
 
 	// Should not trigger failure when both are idle (no activity at all)
-	if called {
+	if called.Load() {
 		t.Error("onFailure should not be called when both TX and RX are idle")
 	}
 }
 
 // TestConnectivityMonitor_OnlyRxIdle tests when RX is idle but TX is active
 func TestConnectivityMonitor_OnlyRxIdle(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	onFailure := func() {
-		called = true
+		called.Store(true)
 	}
 
 	// Use very short timeouts for testing
@@ -199,16 +200,16 @@ func TestConnectivityMonitor_OnlyRxIdle(t *testing.T) {
 	mon.Close()
 
 	// Should trigger failure when RX is idle but TX is active
-	if !called {
+	if !called.Load() {
 		t.Error("onFailure should be called when RX is idle but TX is active")
 	}
 }
 
 // TestConnectivityMonitor_OnlyTxIdle tests when TX is idle but RX is active
 func TestConnectivityMonitor_OnlyTxIdle(t *testing.T) {
-	called := false
+	var called atomic.Bool
 	onFailure := func() {
-		called = true
+		called.Store(true)
 	}
 
 	// Use very short timeouts for testing
@@ -228,7 +229,7 @@ func TestConnectivityMonitor_OnlyTxIdle(t *testing.T) {
 	mon.Close()
 
 	// Should not trigger failure when TX is idle but RX is active (this is normal)
-	if called {
+	if called.Load() {
 		t.Error("onFailure should not be called when TX is idle but RX is active")
 	}
 }
