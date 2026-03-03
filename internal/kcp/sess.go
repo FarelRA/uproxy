@@ -52,8 +52,8 @@ import (
 )
 
 const (
-	// maximum packet size
-	mtuLimit = 1500
+	// maximum packet size (increased to handle KCP segment batching)
+	mtuLimit = 4096
 
 	// accept backlog
 	acceptBacklog = 128
