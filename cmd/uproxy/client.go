@@ -215,7 +215,7 @@ func (cm *connectionManager) setupKCP(packetConn *uproxy.ResilientPacketConn) (*
 // establishSSH creates SSH client config and establishes SSH connection
 func (cm *connectionManager) establishSSH(kcpConn *kcp.UDPSession) error {
 	sshConfig := &ssh.ClientConfig{
-		User: "proxy",
+		User: config.DefaultSSHUser,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(cm.signer),
 		},
@@ -227,7 +227,7 @@ func (cm *connectionManager) establishSSH(kcpConn *kcp.UDPSession) error {
 
 	slog.Info("Attempting SSH authentication",
 		"server", cm.cfg.ServerAddr,
-		"user", "proxy",
+		"user", config.DefaultSSHUser,
 		"key_type", cm.signer.PublicKey().Type(),
 		"fingerprint", ssh.FingerprintSHA256(cm.signer.PublicKey()))
 
@@ -291,7 +291,6 @@ func (cm *connectionManager) closeConnectionLocked() {
 
 // handleConnectivityFailure is called when connectivity issues are detected
 func (cm *connectionManager) handleConnectivityFailure(result network.DiagnosticResult) bool {
-	_ = result
 	// Let resilient UDP default rebind logic handle all failure types.
 	// TUN route updates are handled by the dedicated route monitor path.
 	return false
@@ -342,7 +341,7 @@ func startSOCKS5Server(ctx context.Context, listenAddr string, tcpBufSize int, g
 			if client == nil {
 				return nil, nil, fmt.Errorf("ssh client not connected")
 			}
-			return socks5.DialUDP(ctx, client, "127.0.0.1")
+			return socks5.DialUDP(ctx, client, config.LocalhostIPv4)
 		})
 }
 
@@ -366,7 +365,7 @@ func waitForSSHClient(ctx context.Context, connMgr *connectionManager) (*ssh.Cli
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(1 * time.Second):
+		case <-time.After(config.SSHConnectionWaitInterval):
 		}
 	}
 }

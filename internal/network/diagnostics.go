@@ -14,6 +14,15 @@ import (
 	"uproxy/internal/routing"
 )
 
+// Ping command constants
+const (
+	pingCountArg      = "-c"
+	pingCountValue    = "1"
+	pingTimeoutArg    = "-W"
+	pingTimeoutValue  = "1"
+	pingTimeoutSecond = 1 * time.Second
+)
+
 // networkOps defines operations for network diagnostics (for testing)
 type networkOps interface {
 	GetRouteToHost(ctx context.Context, host string) (*routing.RouteInfo, error)
@@ -33,9 +42,9 @@ func (d *defaultNetworkOps) InterfaceByName(name string) (*net.Interface, error)
 }
 
 func (d *defaultNetworkOps) PingGateway(ctx context.Context, gateway string) error {
-	ctx, cancel := context.WithTimeout(ctx, 1*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, pingTimeoutSecond)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "ping", "-c", "1", "-W", "1", gateway)
+	cmd := exec.CommandContext(ctx, "ping", pingCountArg, pingCountValue, pingTimeoutArg, pingTimeoutValue, gateway)
 	return cmd.Run()
 }
 

@@ -13,6 +13,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"uproxy/internal/common"
+	"uproxy/internal/config"
 	"uproxy/internal/framing"
 	"uproxy/internal/uproxy"
 )
@@ -260,22 +261,20 @@ func forwardConnToChannel(conn net.Conn, channel ssh.Channel, rxBytes *int64, ti
 
 // proxyUDPBidirectional handles bidirectional UDP forwarding between SSH channel and UDP connection.
 func proxyUDPBidirectional(channel ssh.Channel, conn net.Conn) (txBytes, rxBytes int64) {
-	const udpTimeout = 5 * time.Minute
-
 	var wg sync.WaitGroup
 
 	// SSH -> Internet (TX)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		forwardChannelToConn(channel, conn, &txBytes, udpTimeout)
+		forwardChannelToConn(channel, conn, &txBytes, config.DefaultUDPTimeout)
 	}()
 
 	// Internet -> SSH (RX)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		forwardConnToChannel(conn, channel, &rxBytes, udpTimeout)
+		forwardConnToChannel(conn, channel, &rxBytes, config.DefaultUDPTimeout)
 	}()
 
 	wg.Wait()

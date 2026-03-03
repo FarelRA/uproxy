@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"uproxy/internal/config"
 )
 
 // ConnTelemetry tracks connection-level metrics (bytes, packets, drops, rebinds)
@@ -27,7 +29,7 @@ type ConnTelemetry struct {
 // NewConnTelemetry creates a new telemetry tracker
 func NewConnTelemetry(layer string, interval time.Duration) *ConnTelemetry {
 	if interval == 0 {
-		interval = 30 * time.Second
+		interval = config.DefaultTelemetryInterval
 	}
 	t := &ConnTelemetry{
 		layer:    layer,

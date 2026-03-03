@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"net"
 	"sync"
+
+	"uproxy/internal/config"
 )
 
 // IPAllocator manages IP address allocation for TUN clients
@@ -103,9 +105,7 @@ func (a *IPAllocator) generateRandomIPv4() (string, error) {
 		return "", fmt.Errorf("IPv4 network not configured")
 	}
 
-	maxAttempts := 500 // Prevent infinite loops
-
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; attempt < config.MaxIPAllocationAttempts; attempt++ {
 		// Generate random last octet (2-254, skip .0, .1, .255)
 		lastOctet, err := generateRandomOctet()
 		if err != nil {
@@ -139,9 +139,7 @@ func (a *IPAllocator) generateRandomIPv6() (string, error) {
 		return "", fmt.Errorf("IPv6 network not configured")
 	}
 
-	maxAttempts := 500
-
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; attempt < config.MaxIPAllocationAttempts; attempt++ {
 		// Generate random last octet (2-254)
 		lastOctet, err := generateRandomOctet()
 		if err != nil {

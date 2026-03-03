@@ -37,6 +37,10 @@ const (
 	TUNDeviceCheckInterval     = 100 * time.Millisecond
 	TUNDeviceMaxAttempts       = 30
 	DefaultShutdownGracePeriod = 5 * time.Second
+	SSHConnectionWaitInterval  = 1 * time.Second
+	DefaultUDPTimeout          = 5 * time.Minute
+	DefaultTelemetryInterval   = 30 * time.Second
+	MaxIPAllocationAttempts    = 500
 )
 
 // IP and Network Constants
@@ -72,4 +76,21 @@ const (
 	DefaultServerTUNIP      = "10.0.0.1"
 	DefaultServerTUNNetmask = "255.255.255.0"
 	DefaultServerTUNIPv6    = "fd00::1/64"
+)
+
+// SSH Configuration Constants
+const (
+	SSHDirName            = ".ssh"
+	SSHPrivateKeyEd25519  = "id_ed25519"
+	SSHPrivateKeyRSA      = "id_rsa"
+	SSHAuthorizedKeysFile = "authorized_keys"
+	SSHKnownHostsFile     = "known_hosts"
+	DefaultSSHUser        = "proxy"
+)
+
+// Network Address Constants
+const (
+	LocalhostIPv4                   = "127.0.0.1"
+	DevTTYPath                      = "/dev/tty"
+	DefaultMaxConcurrentConnections = 1000
 )

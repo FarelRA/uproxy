@@ -154,7 +154,7 @@ func TestLoadPrivateKey_NoKeysFound(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when no keys found, got nil")
 	}
-	if err != nil && err.Error() != "could not find id_ed25519 or id_rsa in SSH directory" {
+	if err != nil && err.Error() != "could not find id_ed25519 or id_rsa in SSH directory." {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -399,7 +399,7 @@ func TestPromptAndAddKnownHost_UserRejects(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when user rejects, got nil")
 	}
-	if err != nil && err.Error() != "host key verification failed (user rejected)" {
+	if err != nil && err.Error() != "host key verification failed (user rejected)." {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }

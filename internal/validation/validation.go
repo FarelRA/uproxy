@@ -90,30 +90,12 @@ func ValidateSOCKS5Version(version byte) bool {
 
 // ValidateSOCKS5AddressType checks if the SOCKS5 address type is valid
 func ValidateSOCKS5AddressType(atyp byte) bool {
-	switch atyp {
-	case 1: // IPv4
-		return true
-	case 3: // Domain name
-		return true
-	case 4: // IPv6
-		return true
-	default:
-		return false
-	}
+	return atyp == 1 || atyp == 3 || atyp == 4
 }
 
 // ValidateSOCKS5Command checks if the SOCKS5 command is valid
 func ValidateSOCKS5Command(cmd byte) bool {
-	switch cmd {
-	case 1: // CONNECT
-		return true
-	case 2: // BIND
-		return true
-	case 3: // UDP ASSOCIATE
-		return true
-	default:
-		return false
-	}
+	return cmd >= 1 && cmd <= 3
 }
 
 // ValidateClientMode validates the client mode configuration

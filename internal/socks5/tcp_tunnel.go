@@ -11,7 +11,7 @@ import (
 	"uproxy/internal/uproxy"
 )
 
-// HandleTCP runs on the server side to handle a incoming TCP SSH channel.
+// HandleTCP runs on the server side to handle an incoming TCP SSH channel.
 func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, outbound string, dialTimeout time.Duration, tcpBufSize int) {
 	defer channel.Close()
 

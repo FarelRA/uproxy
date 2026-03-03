@@ -1,3 +1,5 @@
+// Package uproxy provides core proxy functionality including logging,
+// authentication, and network utilities for the uproxy VPN system.
 package uproxy
 
 import (

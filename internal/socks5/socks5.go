@@ -27,8 +27,6 @@ const (
 )
 
 const (
-	// maxConcurrentConnections limits the number of concurrent SOCKS5 connections
-	maxConcurrentConnections = 1000
 	// acceptRetryDelay is the delay between retry attempts after accept failure
 	acceptRetryDelay = 100 * time.Millisecond
 )
@@ -72,7 +70,7 @@ func ServeSOCKS5(ctx context.Context, listenAddr string, tcpBufSize int, dialTCP
 	defer wg.Wait()
 
 	// Connection limiter to prevent resource exhaustion
-	semaphore := make(chan struct{}, maxConcurrentConnections)
+	semaphore := make(chan struct{}, config.DefaultMaxConcurrentConnections)
 
 	go func() {
 		<-ctx.Done()

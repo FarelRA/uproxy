@@ -19,6 +19,11 @@ import (
 const (
 	ChannelTypeTUN = "tun-ip"
 	MaxPacketSize  = 2000 // Maximum IP packet size we'll handle
+
+	// IP assignment protocol prefixes
+	IPAssignmentErrorPrefix = "ERROR:"
+	IPAssignmentIPv4Prefix  = "IPv4:"
+	IPAssignmentIPv6Prefix  = "IPv6:"
 )
 
 // ServeTUN starts the TUN tunnel, reading packets from the TUN device and forwarding them through SSH
@@ -233,17 +238,17 @@ func readServerAssignedIPs(channel ssh.Channel) (ipv4 string, ipv6 string, err e
 	msg := string(payload)
 
 	// Check for error message
-	if strings.HasPrefix(msg, "ERROR:") {
-		return "", "", fmt.Errorf("server error: %s", strings.TrimSpace(msg[6:]))
+	if strings.HasPrefix(msg, IPAssignmentErrorPrefix) {
+		return "", "", fmt.Errorf("server error: %s", strings.TrimSpace(msg[len(IPAssignmentErrorPrefix):]))
 	}
 
 	// Parse IP assignment
 	lines := strings.Split(strings.TrimSpace(msg), "\n")
 	for _, line := range lines {
-		if strings.HasPrefix(line, "IPv4:") {
-			ipv4 = strings.TrimSpace(line[5:])
-		} else if strings.HasPrefix(line, "IPv6:") {
-			ipv6 = strings.TrimSpace(line[5:])
+		if strings.HasPrefix(line, IPAssignmentIPv4Prefix) {
+			ipv4 = strings.TrimSpace(line[len(IPAssignmentIPv4Prefix):])
+		} else if strings.HasPrefix(line, IPAssignmentIPv6Prefix) {
+			ipv6 = strings.TrimSpace(line[len(IPAssignmentIPv6Prefix):])
 		}
 	}
 

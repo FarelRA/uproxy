@@ -12,6 +12,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"uproxy/internal/config"
 )
 
 // homeDirFunc is a variable for dependency injection in tests
@@ -38,7 +40,7 @@ func resolveSSHDir(sshDir string) (string, error) {
 		return "", fmt.Errorf("failed to get user home directory: %w", err)
 	}
 
-	cachedSSHDir = filepath.Join(home, ".ssh")
+	cachedSSHDir = filepath.Join(home, config.SSHDirName)
 	return cachedSSHDir, nil
 }
 
@@ -61,8 +63,8 @@ func LoadPrivateKey(sshDir, privateKeyPath string) (ssh.Signer, error) {
 
 		// Try common key names in order of preference
 		paths = []string{
-			filepath.Join(dir, "id_ed25519"),
-			filepath.Join(dir, "id_rsa"),
+			filepath.Join(dir, config.SSHPrivateKeyEd25519),
+			filepath.Join(dir, config.SSHPrivateKeyRSA),
 		}
 	}
 
@@ -79,7 +81,7 @@ func LoadPrivateKey(sshDir, privateKeyPath string) (ssh.Signer, error) {
 		if privateKeyPath != "" {
 			return nil, fmt.Errorf("could not read private key from %s", privateKeyPath)
 		}
-		return nil, errors.New("could not find id_ed25519 or id_rsa in SSH directory")
+		return nil, fmt.Errorf("could not find %s or %s in SSH directory.", config.SSHPrivateKeyEd25519, config.SSHPrivateKeyRSA)
 	}
 
 	signer, err := ssh.ParsePrivateKey(rawKey)
@@ -103,7 +105,7 @@ func CheckAuthorizedKeys(pubKey ssh.PublicKey, sshDir, authorizedKeysPath string
 		if err != nil {
 			return err
 		}
-		authFile = filepath.Join(dir, "authorized_keys")
+		authFile = filepath.Join(dir, config.SSHAuthorizedKeysFile)
 	}
 
 	b, err := os.ReadFile(authFile)
@@ -138,7 +140,7 @@ func VerifyKnownHost(address string, remote net.Addr, pubKey ssh.PublicKey, sshD
 		if err != nil {
 			return err
 		}
-		khPath = filepath.Join(dir, "known_hosts")
+		khPath = filepath.Join(dir, config.SSHKnownHostsFile)
 	}
 
 	// Ensure known_hosts exists to prevent parsing panics
@@ -196,7 +198,7 @@ func appendKnownHostEntry(knownHostsPath, normalizedHost string, pubKey ssh.Publ
 
 func promptAndAddKnownHost(normalizedHost string, pubKey ssh.PublicKey, knownHostsPath string) error {
 	// Attempt to bypass background detached streams by writing straight to the TTY
-	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	tty, err := os.OpenFile(config.DevTTYPath, os.O_RDWR, 0)
 	if err != nil {
 		slog.Warn("Failed to open /dev/tty for interactive prompt, falling back to os.Stdin")
 		tty = os.Stdin
@@ -216,7 +218,7 @@ func promptAndAddKnownHost(normalizedHost string, pubKey ssh.PublicKey, knownHos
 
 	response = strings.ToLower(strings.TrimSpace(response))
 	if response != "yes" {
-		return errors.New("host key verification failed (user rejected)")
+		return errors.New("host key verification failed (user rejected).")
 	}
 
 	if err := appendKnownHostEntry(knownHostsPath, normalizedHost, pubKey); err != nil {

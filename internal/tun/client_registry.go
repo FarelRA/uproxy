@@ -48,9 +48,9 @@ func (cr *ClientRegistry) AllocateAndNotifyClient(channel ssh.Channel) (*ClientR
 	slog.Info("IPs allocated for client", "ipv4", clientIPv4, "ipv6", clientIPv6)
 
 	// Send assigned IPs to client
-	ipMsg := fmt.Sprintf("IPv4:%s\n", clientIPv4)
+	ipMsg := fmt.Sprintf("%s%s\n", IPAssignmentIPv4Prefix, clientIPv4)
 	if clientIPv6 != "" {
-		ipMsg += fmt.Sprintf("IPv6:%s\n", clientIPv6)
+		ipMsg += fmt.Sprintf("%s%s\n", IPAssignmentIPv6Prefix, clientIPv6)
 	}
 	if err := framing.WriteFramed(channel, []byte(ipMsg)); err != nil {
 		// Release the allocated IPs since we failed to notify

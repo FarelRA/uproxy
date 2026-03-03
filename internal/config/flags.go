@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -74,7 +75,9 @@ func AddClientFlags(cmd *cobra.Command, cfg *ClientConfig) {
 	cmd.Flags().BoolVar(&cfg.TUN.AutoRoute, "tun-auto-route", true, "Automatically configure default route through TUN")
 
 	// Mark required flags
-	cmd.MarkFlagRequired("server")
+	if err := cmd.MarkFlagRequired("server"); err != nil {
+		panic(fmt.Sprintf("failed to mark server flag as required: %v", err))
+	}
 }
 
 // SetupSSHPaths sets up default SSH paths if not specified
@@ -84,24 +87,24 @@ func SetupSSHPaths(cfg *SSHConfig, isServer bool) {
 	}
 
 	if cfg.PrivateKey == "" {
-		cfg.PrivateKey = cfg.Dir + "/id_ed25519"
+		cfg.PrivateKey = filepath.Join(cfg.Dir, SSHPrivateKeyEd25519)
 	}
 
 	if isServer && cfg.AuthorizedKeys == "" {
-		cfg.AuthorizedKeys = cfg.Dir + "/authorized_keys"
+		cfg.AuthorizedKeys = filepath.Join(cfg.Dir, SSHAuthorizedKeysFile)
 	}
 
 	if !isServer && cfg.KnownHosts == "" {
-		cfg.KnownHosts = cfg.Dir + "/known_hosts"
+		cfg.KnownHosts = filepath.Join(cfg.Dir, SSHKnownHostsFile)
 	}
 }
 
 func defaultSSHDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
-		return ".ssh"
+		return SSHDirName
 	}
-	return filepath.Join(home, ".ssh")
+	return filepath.Join(home, SSHDirName)
 }
 
 // InitializeCommon performs common initialization steps for both client and server
