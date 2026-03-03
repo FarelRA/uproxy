@@ -21,14 +21,15 @@
 #   KCP_INTERVAL        - KCP timer interval in ms (default: 10)
 #   KCP_RESEND          - KCP fast resend mode (default: 2)
 #   KCP_NC              - KCP disable congestion control (default: 1)
-#   KCP_SNDWND          - KCP send window (default: 4096)
-#   KCP_RCVWND          - KCP receive window (default: 4096)
+#   KCP_SNDWND          - KCP send window (default: 1024)
+#   KCP_RCVWND          - KCP receive window (default: 1024)
 #   KCP_MTU             - KCP MTU (default: 1350)
 #   TUN_NAME            - TUN device name (default: tun0)
-#   TUN_IP              - TUN interface IPv4 address (default: 172.27.66.1)
+#   TUN_IP              - TUN interface IPv4 address (default: 10.0.0.1)
 #   TUN_NETMASK         - TUN interface netmask (default: 255.255.255.0)
-#   TUN_IPV6            - TUN interface IPv6 address with prefix (default: fd42:cafe:beef::1/64)
-#   TUN_MTU             - TUN interface MTU (default: 1280)
+#   TUN_IPV6            - TUN interface IPv6 address with prefix (default: fd00::1/64)
+#   TUN_MTU             - TUN interface MTU (default: 1500)
+#   TUN_AUTO_ROUTE      - Automatically configure routing for TUN clients (default: true)
 #   EXTRA_FLAGS         - Additional flags to pass to uproxy-server
 #
 
@@ -72,10 +73,10 @@ detect_binary() {
     
     case "$arch" in
         x86_64)
-            echo "$BINARY_DIR/uproxy-server-amd64"
+            echo "$BINARY_DIR/uproxy-linux-amd64"
             ;;
         aarch64|arm64)
-            echo "$BINARY_DIR/uproxy-server-arm64"
+            echo "$BINARY_DIR/uproxy-linux-arm64"
             ;;
         *)
             log_error "Unsupported architecture: $arch"
@@ -90,7 +91,7 @@ validate_binary() {
     
     if [[ ! -f "$binary" ]]; then
         log_error "Binary not found: $binary"
-        log_info "Please build the project first: go build -o $binary ./cmd/uproxy-server"
+        log_info "Please build the project first: go build -o $binary ./cmd/uproxy"
         exit 1
     fi
     
@@ -144,22 +145,22 @@ build_args() {
     args+=(--kcp-interval "${KCP_INTERVAL:-10}")
     args+=(--kcp-resend "${KCP_RESEND:-2}")
     args+=(--kcp-nc "${KCP_NC:-1}")
-    args+=(--kcp-sndwnd "${KCP_SNDWND:-4096}")
-    args+=(--kcp-rcvwnd "${KCP_RCVWND:-4096}")
+    args+=(--kcp-sndwnd "${KCP_SNDWND:-1024}")
+    args+=(--kcp-rcvwnd "${KCP_RCVWND:-1024}")
     args+=(--kcp-mtu "${KCP_MTU:-1350}")
     
     # TUN mode parameters (requires root)
     # If running as root, provide default TUN parameters
     if [[ $EUID -eq 0 ]]; then
         args+=(--tun-name "${TUN_NAME:-tun0}")
-        args+=(--tun-ip "${TUN_IP:-172.27.66.1}")
+        args+=(--tun-ip "${TUN_IP:-10.0.0.1}")
         args+=(--tun-netmask "${TUN_NETMASK:-255.255.255.0}")
-        args+=(--tun-ipv6 "${TUN_IPV6:-fd42:cafe:beef::1/64}")
-        args+=(--tun-mtu "${TUN_MTU:-1280}")
+        args+=(--tun-ipv6 "${TUN_IPV6:-fd00::1/64}")
+        args+=(--tun-mtu "${TUN_MTU:-1500}")
     fi
     
     # Auto-route configuration (default: true)
-    args+=(--auto-route="${AUTO_ROUTE:-true}")
+    args+=(--tun-auto-route="${TUN_AUTO_ROUTE:-true}")
     
     # Extra flags
     if [[ -n "${EXTRA_FLAGS:-}" ]]; then
@@ -220,7 +221,7 @@ start_server() {
     
     # Start server with nohup
     # shellcheck disable=SC2086
-    nohup "$binary" $args > "$LOG_FILE" 2>&1 &
+    nohup "$binary" server $args > "$LOG_FILE" 2>&1 &
     local pid=$!
     
     # Save PID
@@ -420,14 +421,15 @@ Environment Variables:
     KCP_INTERVAL        KCP timer interval in ms (default: 10)
     KCP_RESEND          KCP fast resend mode (default: 2)
     KCP_NC              KCP disable congestion control (default: 1)
-    KCP_SNDWND          KCP send window (default: 4096)
-    KCP_RCVWND          KCP receive window (default: 4096)
+    KCP_SNDWND          KCP send window (default: 1024)
+    KCP_RCVWND          KCP receive window (default: 1024)
     KCP_MTU             KCP MTU (default: 1350)
     TUN_NAME            TUN device name (default: tun0)
-    TUN_IP              TUN interface IPv4 address (default: 172.27.66.1)
+    TUN_IP              TUN interface IPv4 address (default: 10.0.0.1)
     TUN_NETMASK         TUN interface netmask (default: 255.255.255.0)
-    TUN_IPV6            TUN interface IPv6 address with prefix (default: fd42:cafe:beef::1/64)
-    TUN_MTU             TUN interface MTU (default: 1280)
+    TUN_IPV6            TUN interface IPv6 address with prefix (default: fd00::1/64)
+    TUN_MTU             TUN interface MTU (default: 1500)
+    TUN_AUTO_ROUTE      Automatically configure routing for TUN clients (default: true)
     EXTRA_FLAGS         Additional flags to pass to uproxy-server
 
 Examples:
@@ -450,7 +452,7 @@ Examples:
     KCP_MTU=1400 KCP_SNDWND=8192 $0 start
     
     # Start with custom TUN configuration
-    sudo TUN_IP=192.168.100.1 TUN_IPV6=fd00:1234::1/64 $0 start
+    sudo TUN_IP=192.168.100.1 TUN_IPV6=fd00:1234::1/64 TUN_AUTO_ROUTE=true $0 start
 
 EOF
 }

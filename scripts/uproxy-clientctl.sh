@@ -9,8 +9,9 @@
 #   MODE                - Operating mode: auto|socks5|tun (default: auto, uses socks5 unless TUN_IP is set)
 #   LISTEN              - Local SOCKS5 listen address (default: 127.0.0.1:1080)
 #   TUN_NAME            - TUN device name (default: tun0)
-#   TUN_MTU             - TUN interface MTU (default: 1400)
+#   TUN_MTU             - TUN interface MTU (default: 1500)
 #   TUN_ROUTES          - Comma-separated routes to add (e.g., 0.0.0.0/0,::/0)
+#   TUN_AUTO_ROUTE      - Automatically configure default route through TUN (default: true)
 #   SSH_DIR             - SSH directory (default: ~/.ssh)
 #   SSH_PRIVATE_KEY     - SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)
 #   SSH_KNOWN_HOSTS     - SSH known_hosts file (default: ~/.ssh/known_hosts)
@@ -25,8 +26,8 @@
 #   KCP_INTERVAL        - KCP timer interval in ms (default: 10)
 #   KCP_RESEND          - KCP fast resend mode (default: 2)
 #   KCP_NC              - KCP disable congestion control (default: 1)
-#   KCP_SNDWND          - KCP send window (default: 4096)
-#   KCP_RCVWND          - KCP receive window (default: 4096)
+#   KCP_SNDWND          - KCP send window (default: 1024)
+#   KCP_RCVWND          - KCP receive window (default: 1024)
 #   KCP_MTU             - KCP MTU (default: 1350)
 #   EXTRA_FLAGS         - Additional flags to pass to uproxy-client
 #
@@ -71,10 +72,10 @@ detect_binary() {
     
     case "$arch" in
         x86_64)
-            echo "$BINARY_DIR/uproxy-client-amd64"
+            echo "$BINARY_DIR/uproxy-linux-amd64"
             ;;
         aarch64|arm64)
-            echo "$BINARY_DIR/uproxy-client-arm64"
+            echo "$BINARY_DIR/uproxy-linux-arm64"
             ;;
         *)
             log_error "Unsupported architecture: $arch"
@@ -89,7 +90,7 @@ validate_binary() {
     
     if [[ ! -f "$binary" ]]; then
         log_error "Binary not found: $binary"
-        log_info "Please build the project first: go build -o $binary ./cmd/uproxy-client"
+        log_info "Please build the project first: go build -o $binary ./cmd/uproxy"
         exit 1
     fi
     
@@ -120,13 +121,13 @@ build_args() {
     
     # TUN parameters (IPs are assigned by server, only device config needed)
     args+=(--tun-name "${TUN_NAME:-tun0}")
-    args+=(--tun-mtu "${TUN_MTU:-1400}")
+    args+=(--tun-mtu "${TUN_MTU:-1500}")
     if [[ -n "${TUN_ROUTES:-}" ]]; then
         args+=(--tun-routes "$TUN_ROUTES")
     fi
     
     # Auto-route configuration (default: true)
-    args+=(--auto-route="${AUTO_ROUTE:-true}")
+    args+=(--tun-auto-route="${TUN_AUTO_ROUTE:-true}")
     
     # SSH configuration
     if [[ -n "${SSH_DIR:-}" ]]; then
@@ -159,8 +160,8 @@ build_args() {
     args+=(--kcp-interval "${KCP_INTERVAL:-10}")
     args+=(--kcp-resend "${KCP_RESEND:-2}")
     args+=(--kcp-nc "${KCP_NC:-1}")
-    args+=(--kcp-sndwnd "${KCP_SNDWND:-4096}")
-    args+=(--kcp-rcvwnd "${KCP_RCVWND:-4096}")
+    args+=(--kcp-sndwnd "${KCP_SNDWND:-1024}")
+    args+=(--kcp-rcvwnd "${KCP_RCVWND:-1024}")
     args+=(--kcp-mtu "${KCP_MTU:-1350}")
     
     # Extra flags
@@ -222,7 +223,7 @@ start_client() {
     
     # Start client with nohup
     # shellcheck disable=SC2086
-    nohup "$binary" $args > "$LOG_FILE" 2>&1 &
+    nohup "$binary" client $args > "$LOG_FILE" 2>&1 &
     local pid=$!
     
     # Save PID
@@ -417,8 +418,9 @@ Environment Variables:
     MODE                Operating mode: auto|socks5|tun (default: auto)
     LISTEN              Local SOCKS5 listen address (default: 127.0.0.1:1080)
     TUN_NAME            TUN device name (default: tun0)
-    TUN_MTU             TUN interface MTU (default: 1400)
+    TUN_MTU             TUN interface MTU (default: 1500)
     TUN_ROUTES          Comma-separated routes to add (e.g., 0.0.0.0/0,::/0)
+    TUN_AUTO_ROUTE      Automatically configure default route through TUN (default: true)
     SSH_DIR             SSH directory (default: ~/.ssh)
     SSH_PRIVATE_KEY     SSH private key file (default: ~/.ssh/id_ed25519 or ~/.ssh/id_rsa)
     SSH_KNOWN_HOSTS     SSH known_hosts file (default: ~/.ssh/known_hosts)
@@ -433,8 +435,8 @@ Environment Variables:
     KCP_INTERVAL        KCP timer interval in ms (default: 10)
     KCP_RESEND          KCP fast resend mode (default: 2)
     KCP_NC              KCP disable congestion control (default: 1)
-    KCP_SNDWND          KCP send window (default: 4096)
-    KCP_RCVWND          KCP receive window (default: 4096)
+    KCP_SNDWND          KCP send window (default: 1024)
+    KCP_RCVWND          KCP receive window (default: 1024)
     KCP_MTU             KCP MTU (default: 1350)
     EXTRA_FLAGS         Additional flags to pass to uproxy-client
 
