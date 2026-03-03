@@ -29,12 +29,12 @@ func TestWriteFramed(t *testing.T) {
 		},
 		{
 			name:    "max size data",
-			data:    bytes.Repeat([]byte("x"), 65535),
+			data:    bytes.Repeat([]byte("x"), MaxFrameSize),
 			wantErr: false,
 		},
 		{
 			name:    "oversized data",
-			data:    bytes.Repeat([]byte("x"), 65536),
+			data:    bytes.Repeat([]byte("x"), MaxFrameSize+1),
 			wantErr: true,
 		},
 	}
@@ -236,7 +236,7 @@ func (r *failReader) Read(p []byte) (n int, err error) {
 
 func TestLargeFrameBoundary(t *testing.T) {
 	// Test at exactly the boundary
-	data := bytes.Repeat([]byte("x"), 65535)
+	data := bytes.Repeat([]byte("x"), MaxFrameSize)
 	var buf bytes.Buffer
 
 	if err := WriteFramed(&buf, data); err != nil {
@@ -248,8 +248,8 @@ func TestLargeFrameBoundary(t *testing.T) {
 		t.Fatalf("ReadFramed() at max size error = %v", err)
 	}
 
-	if len(got) != 65535 {
-		t.Errorf("ReadFramed() got %d bytes, want 65535", len(got))
+	if len(got) != MaxFrameSize {
+		t.Errorf("ReadFramed() got %d bytes, want %d", len(got), MaxFrameSize)
 	}
 }
 

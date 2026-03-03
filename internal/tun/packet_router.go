@@ -31,7 +31,7 @@ func (pr *PacketRouter) Start() {
 
 // dispatchPackets reads packets from TUN device and routes them to the correct client.
 func (pr *PacketRouter) dispatchPackets() {
-	buf := make([]byte, 2048)
+	buf := make([]byte, MaxPacketSize)
 
 	for {
 		select {

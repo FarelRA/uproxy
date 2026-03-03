@@ -6,13 +6,19 @@ import (
 	"io"
 )
 
+const (
+	// MaxFrameSize is the maximum allowed frame size to prevent memory exhaustion attacks.
+	// Set to 16KB as a reasonable limit for packet-based protocols.
+	MaxFrameSize = 16384
+)
+
 // WriteFramed writes a length-prefixed byte slice to the writer.
 // The length is encoded as a 2-byte big-endian uint16, limiting data to 65535 bytes.
 // Callers must ensure data length does not exceed this limit before calling.
 // Returns an error if data exceeds the maximum frame size.
 func WriteFramed(w io.Writer, data []byte) error {
-	if len(data) > 65535 {
-		return fmt.Errorf("data too large: %d bytes (max 65535)", len(data))
+	if len(data) > MaxFrameSize {
+		return fmt.Errorf("data too large: %d bytes (max %d)", len(data), MaxFrameSize)
 	}
 
 	var lenBuf [2]byte
@@ -37,6 +43,9 @@ func ReadFramed(r io.Reader) ([]byte, error) {
 	length := binary.BigEndian.Uint16(lenBuf[:])
 	if length == 0 {
 		return nil, fmt.Errorf("invalid frame length: 0")
+	}
+	if length > MaxFrameSize {
+		return nil, fmt.Errorf("frame too large: %d bytes (max %d)", length, MaxFrameSize)
 	}
 
 	data := make([]byte, length)

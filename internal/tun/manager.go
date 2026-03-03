@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -22,10 +23,11 @@ type TUNManager struct {
 
 // ClientRoute holds routing information for a single client.
 type ClientRoute struct {
-	IPv4    string
-	IPv6    string
-	Channel ssh.Channel
-	done    chan struct{}
+	IPv4     string
+	IPv6     string
+	Channel  ssh.Channel
+	done     chan struct{}
+	doneOnce sync.Once // Ensures done channel is closed only once
 }
 
 // NewTUNManager creates a TUN manager with a shared TUN device.

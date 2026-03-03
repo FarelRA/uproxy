@@ -94,7 +94,7 @@ func (cr *ClientRegistry) UnregisterClient(ipv4, ipv6 string) {
 	defer cr.Mu.Unlock()
 
 	if route, exists := cr.Clients[ipv4]; exists {
-		close(route.done)
+		route.doneOnce.Do(func() { close(route.done) })
 		delete(cr.Clients, ipv4)
 		if ipv6 != "" {
 			if ip, _, err := net.ParseCIDR(ipv6); err == nil {
@@ -126,7 +126,7 @@ func (cr *ClientRegistry) CleanupAll() {
 	closed := make(map[*ClientRoute]bool)
 	for _, route := range cr.Clients {
 		if !closed[route] {
-			close(route.done)
+			route.doneOnce.Do(func() { close(route.done) })
 			closed[route] = true
 		}
 	}

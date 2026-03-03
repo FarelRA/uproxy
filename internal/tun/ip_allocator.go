@@ -109,7 +109,7 @@ func (a *IPAllocator) generateRandomIPv4() (string, error) {
 		// Generate random last octet (2-254, skip .0, .1, .255)
 		lastOctet, err := generateRandomOctet()
 		if err != nil {
-			continue
+			return "", fmt.Errorf("failed to generate random octet: %w", err)
 		}
 
 		// Construct IP
