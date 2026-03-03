@@ -244,7 +244,8 @@ func NewKCP(conv uint32, output output_callback) *KCP {
 
 // newSegment creates a KCP segment
 func (kcp *KCP) newSegment(size int) (seg segment) {
-	seg.data = defaultBufferPool.Get()[:size]
+	buf := defaultBufferPool.Get()
+	seg.data = buf[:size]
 	return
 }
 
@@ -510,9 +511,9 @@ func (kcp *KCP) parse_data(newseg segment) bool {
 	repeat := false
 	if !kcp.rcv_buf.Has(sn) {
 		// replicate the content if it's new
-		dataCopy := defaultBufferPool.Get()[:len(newseg.data)]
+		dataCopy := defaultBufferPool.Get()
 		copy(dataCopy, newseg.data)
-		newseg.data = dataCopy
+		newseg.data = dataCopy[:len(newseg.data)]
 
 		// insert the new segment into rcv_buf
 		heap.Push(kcp.rcv_buf, newseg)

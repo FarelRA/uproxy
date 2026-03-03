@@ -164,12 +164,12 @@ func newUDPSession(conv uint32, l *Listener, conn net.PacketConn, ownConn bool, 
 		// A basic check for the minimum packet size
 		if size >= IKCP_OVERHEAD {
 			// make a copy
-			bts := defaultBufferPool.Get()[:size]
-			copy(bts[:], buf)
+			bts := defaultBufferPool.Get()
+			copy(bts, buf[:size])
 
 			// delivery to post processing (non-blocking to avoid deadlock under lock)
 			select {
-			case sess.chPostProcessing <- sendRequest{buffer: bts}:
+			case sess.chPostProcessing <- sendRequest{buffer: bts[:size]}:
 			case <-sess.die:
 				return
 			default:
