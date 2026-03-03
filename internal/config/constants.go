@@ -38,9 +38,11 @@ const (
 	TUNDeviceMaxAttempts       = 30
 	DefaultShutdownGracePeriod = 5 * time.Second
 	SSHConnectionWaitInterval  = 1 * time.Second
-	DefaultUDPTimeout          = 5 * time.Minute
-	DefaultTelemetryInterval   = 30 * time.Second
-	MaxIPAllocationAttempts    = 500
+	// DefaultUDPTimeout is set to 30 hours to ensure UDP associations survive
+	// 24+ hours of network downtime without timing out prematurely
+	DefaultUDPTimeout        = 30 * time.Hour
+	DefaultTelemetryInterval = 30 * time.Second
+	MaxIPAllocationAttempts  = 500
 )
 
 // IP and Network Constants
