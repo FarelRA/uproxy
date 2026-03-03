@@ -1,6 +1,8 @@
 package uproxy
 
 import (
+	"context"
+	"errors"
 	"net"
 	"testing"
 	"time"
@@ -210,32 +212,51 @@ func TestResilientPacketConn_Close(t *testing.T) {
 }
 
 func TestResilientPacketConn_ReadFromAfterClose(t *testing.T) {
-	r := NewResilientPacketConn(":0", "", 1*time.Second, 0, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Wait for connection to be established
-	time.Sleep(100 * time.Millisecond)
+	r := &ResilientPacketConn{
+		ctx:          ctx,
+		cancel:       cancel,
+		bindAddr:     ":0",
+		reconnectInt: 1 * time.Second,
+		closed:       false,
+		telemetry:    telemetry.NewConnTelemetry("test", 1*time.Second),
+	}
+	defer r.Close()
 
+	// Close the connection
 	r.Close()
 
 	// Try to read after close
 	buf := make([]byte, 1024)
 	_, _, err := r.ReadFrom(buf)
-	if err == nil {
-		t.Error("Expected error on ReadFrom after close, got nil")
+	if err != net.ErrClosed {
+		t.Errorf("Expected net.ErrClosed, got %v", err)
 	}
 }
 
 func TestResilientPacketConn_WriteToAfterClose(t *testing.T) {
-	r := NewResilientPacketConn(":0", "", 1*time.Second, 0, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	// Wait for connection to be established
-	time.Sleep(100 * time.Millisecond)
+	r := &ResilientPacketConn{
+		ctx:          ctx,
+		cancel:       cancel,
+		bindAddr:     ":0",
+		reconnectInt: 1 * time.Second,
+		closed:       false,
+		telemetry:    telemetry.NewConnTelemetry("test", 1*time.Second),
+	}
+	defer r.Close()
 
-	addr := r.LocalAddr()
+	// Close the connection
 	r.Close()
 
 	// Try to write after close
-	_, err := r.WriteTo([]byte("test"), addr)
+	testData := []byte("test")
+	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:9999")
+	_, err := r.WriteTo(testData, addr)
 	if err != net.ErrClosed {
 		t.Errorf("Expected net.ErrClosed, got %v", err)
 	}
@@ -318,19 +339,26 @@ func TestResilientPacketConn_SetDeadlinesWhenConnNil(t *testing.T) {
 }
 
 func TestResilientPacketConn_WriteToWhenConnNil(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	r := &ResilientPacketConn{
+		ctx:          ctx,
+		cancel:       cancel,
 		bindAddr:     ":0",
 		reconnectInt: 1 * time.Second,
+		closed:       false,
+		telemetry:    telemetry.NewConnTelemetry("test", 1*time.Second),
 	}
 
-	// WriteTo when conn is nil should return len(p) without error
+	// WriteTo when conn is nil should return a connection-unavailable error
 	testData := []byte("test")
 	n, err := r.WriteTo(testData, &net.UDPAddr{})
-	if err != nil {
-		t.Errorf("WriteTo should not error when conn is nil, got %v", err)
+	if !errors.Is(err, errConnectionUnavailable) {
+		t.Errorf("Expected errConnectionUnavailable, got %v", err)
 	}
-	if n != len(testData) {
-		t.Errorf("Expected to write %d bytes, got %d", len(testData), n)
+	if n != 0 {
+		t.Errorf("Expected to write 0 bytes, got %d", n)
 	}
 }
 
@@ -408,14 +436,14 @@ func TestResilientPacketConn_WriteToErrors(t *testing.T) {
 	}
 	r.mu.Unlock()
 
-	// Try to write - should trigger reconnect and return success
+	// Try to write - should trigger reconnect and return the write error
 	testData := []byte("test")
 	n, err := r.WriteTo(testData, addr)
-	if err != nil {
-		t.Errorf("WriteTo should not return error on reconnect: %v", err)
+	if err == nil {
+		t.Error("WriteTo should return error on failed write")
 	}
-	if n != len(testData) {
-		t.Errorf("Expected to write %d bytes, got %d", len(testData), n)
+	if n != 0 {
+		t.Errorf("Expected to write 0 bytes, got %d", n)
 	}
 }
 
@@ -582,7 +610,12 @@ func TestResilientPacketConn_ReadFromTimeout(t *testing.T) {
 }
 
 func TestResilientPacketConn_ReadFromWhenConnNil(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	r := &ResilientPacketConn{
+		ctx:          ctx,
+		cancel:       cancel,
 		bindAddr:     ":0",
 		reconnectInt: 1 * time.Second,
 		closed:       false,
@@ -636,7 +669,12 @@ func TestResilientPacketConn_WriteToTimeout(t *testing.T) {
 }
 
 func TestResilientPacketConn_WriteToWhenConnNilButNotClosed(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	r := &ResilientPacketConn{
+		ctx:          ctx,
+		cancel:       cancel,
 		bindAddr:     ":0",
 		reconnectInt: 1 * time.Second,
 		closed:       false,
@@ -647,33 +685,27 @@ func TestResilientPacketConn_WriteToWhenConnNilButNotClosed(t *testing.T) {
 	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:9999")
 	n, err := r.WriteTo([]byte("test"), addr)
 
-	// Should return len(p) with no error when conn is nil but not closed
-	if err != nil {
-		t.Errorf("Expected no error when conn is nil but not closed, got %v", err)
+	// Should return a connection-unavailable error when conn is nil but not closed
+	if !errors.Is(err, errConnectionUnavailable) {
+		t.Errorf("Expected errConnectionUnavailable when conn is nil but not closed, got %v", err)
 	}
-	if n != 4 {
-		t.Errorf("Expected n=4, got %d", n)
+	if n != 0 {
+		t.Errorf("Expected n=0, got %d", n)
 	}
 }
 
 func TestResilientPacketConn_CloseWhenConnNil(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	r := &ResilientPacketConn{
+		ctx:          ctx,
+		cancel:       cancel,
 		bindAddr:     ":0",
 		reconnectInt: 1 * time.Second,
 		closed:       false,
 		telemetry:    telemetry.NewConnTelemetry("test", 1*time.Second),
 	}
-
-	// Close when conn is nil
-	err := r.Close()
-	if err != nil {
-		t.Errorf("Close should not error when conn is nil, got %v", err)
-	}
-}
-
-func TestResilientPacketConn_WriteToNonTimeoutError(t *testing.T) {
-	r := NewResilientPacketConn(":0", "", 50*time.Millisecond, 0, true)
-	defer r.Close()
 
 	// Wait for initial connection
 	time.Sleep(50 * time.Millisecond)
@@ -685,24 +717,27 @@ func TestResilientPacketConn_WriteToNonTimeoutError(t *testing.T) {
 	}
 	r.mu.Unlock()
 
-	// Try to write - should trigger reconnect and return len(p), nil
+	// Try to write - should trigger reconnect and return an error
 	addr, _ := net.ResolveUDPAddr("udp", "127.0.0.1:9999")
 	n, err := r.WriteTo([]byte("test"), addr)
 
-	// Should return len(p), nil after triggering reconnect
-	if err != nil {
-		t.Errorf("Expected nil error after reconnect trigger, got %v", err)
+	if err == nil {
+		t.Error("Expected error after reconnect trigger")
 	}
-	if n != 4 {
-		t.Errorf("Expected n=4, got %d", n)
+	if n != 0 {
+		t.Errorf("Expected n=0, got %d", n)
 	}
 }
 
 func TestResilientPacketConn_ReconnectSyncErrors(t *testing.T) {
-	// Test reconnectSync with invalid bind address
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	r := &ResilientPacketConn{
-		bindAddr:     "invalid:address:format",
-		reconnectInt: 50 * time.Millisecond,
+		ctx:          ctx,
+		cancel:       cancel,
+		bindAddr:     "invalid-address-format",
+		reconnectInt: 10 * time.Millisecond,
 		closed:       false,
 		telemetry:    telemetry.NewConnTelemetry("test", 1*time.Second),
 	}

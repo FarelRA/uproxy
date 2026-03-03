@@ -375,12 +375,18 @@ func TestGetDefaultRoute_MissingGateway(t *testing.T) {
 		},
 	}
 
-	_, err := GetDefaultRoute()
-	if err == nil {
-		t.Error("expected error when gateway is missing")
+	info, err := GetDefaultRoute()
+	if err != nil {
+		t.Errorf("expected no error when gateway is missing but interface exists, got: %v", err)
 	}
-	if err.Error() != "default route missing gateway" {
-		t.Errorf("unexpected error: %v", err)
+	if info == nil {
+		t.Fatal("expected non-nil route info")
+	}
+	if info.Interface != "eth0" {
+		t.Errorf("expected interface eth0, got %q", info.Interface)
+	}
+	if info.Gateway != "" {
+		t.Errorf("expected empty gateway, got %q", info.Gateway)
 	}
 }
 

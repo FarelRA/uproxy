@@ -76,6 +76,25 @@ func TestPerformSOCKS5Handshake(t *testing.T) {
 	}
 }
 
+func TestPerformSOCKS5HandshakeNoAcceptableMethod(t *testing.T) {
+	conn := testutil.NewMockConn()
+	conn.ReadBuf = bytes.NewBuffer([]byte{
+		0x05, // version
+		0x01, // method count
+		0x02, // username/password only
+	})
+
+	err := performSOCKS5Handshake(conn)
+	if err == nil {
+		t.Fatal("performSOCKS5Handshake() expected error for unsupported auth methods")
+	}
+
+	resp := conn.WriteBuf.Bytes()
+	if len(resp) != 2 || resp[0] != 0x05 || resp[1] != 0xff {
+		t.Fatalf("unexpected handshake response: %v", resp)
+	}
+}
+
 // TestParseSOCKS5Request tests SOCKS5 request parsing
 func TestParseSOCKS5Request(t *testing.T) {
 	tests := []struct {
@@ -167,6 +186,18 @@ func TestParseSOCKS5Request(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "invalid reserved byte",
+			data: []byte{
+				0x05,
+				config.SOCKS5CommandConnect,
+				0x01,
+				config.SOCKS5AddressIPv4,
+				192, 168, 1, 1,
+				0x00, 0x50,
+			},
+			wantErr: true,
+		},
+		{
 			name:    "truncated request",
 			data:    []byte{0x05, 0x01},
 			wantErr: true,
@@ -207,7 +238,7 @@ func TestHandleConnectCommand(t *testing.T) {
 			return remoteConn, nil
 		}
 
-		handleConnectCommand(context.Background(), conn, "example.com:80", "127.0.0.1:12345", dialTCP)
+		handleConnectCommand(context.Background(), conn, "example.com:80", "127.0.0.1:12345", config.DefaultTCPBufSize, dialTCP)
 
 		// Check success response
 		resp := conn.WriteBuf.Bytes()
@@ -223,11 +254,11 @@ func TestHandleConnectCommand(t *testing.T) {
 			return nil, errors.New("connection refused")
 		}
 
-		handleConnectCommand(context.Background(), conn, "example.com:80", "127.0.0.1:12345", dialTCP)
+		handleConnectCommand(context.Background(), conn, "example.com:80", "127.0.0.1:12345", config.DefaultTCPBufSize, dialTCP)
 
 		// Check error response
 		resp := conn.WriteBuf.Bytes()
-		if len(resp) < 10 || resp[0] != 0x05 || resp[1] != 0x05 {
+		if len(resp) < 10 || resp[0] != 0x05 || resp[1] != config.SOCKS5ReplyGeneralFailure {
 			t.Errorf("Invalid error response: %v", resp)
 		}
 	})
@@ -245,8 +276,7 @@ func TestHandleUDPAssociate(t *testing.T) {
 			return udpAddr, closer, nil
 		}
 
-		go handleUDPAssociate(context.Background(), conn, "127.0.0.1:12345", dialUDP)
-		time.Sleep(10 * time.Millisecond)
+		handleUDPAssociate(context.Background(), conn, "127.0.0.1:12345", dialUDP)
 
 		// Check response
 		resp := conn.WriteBuf.Bytes()
@@ -254,7 +284,6 @@ func TestHandleUDPAssociate(t *testing.T) {
 			t.Errorf("Invalid UDP associate response: %v", resp)
 		}
 
-		conn.Close()
 	})
 
 	t.Run("successful UDP associate IPv6", func(t *testing.T) {
@@ -267,8 +296,7 @@ func TestHandleUDPAssociate(t *testing.T) {
 			return udpAddr, closer, nil
 		}
 
-		go handleUDPAssociate(context.Background(), conn, "127.0.0.1:12345", dialUDP)
-		time.Sleep(10 * time.Millisecond)
+		handleUDPAssociate(context.Background(), conn, "127.0.0.1:12345", dialUDP)
 
 		// Check response
 		resp := conn.WriteBuf.Bytes()
@@ -276,7 +304,6 @@ func TestHandleUDPAssociate(t *testing.T) {
 			t.Errorf("Invalid UDP associate IPv6 response: %v", resp)
 		}
 
-		conn.Close()
 	})
 
 	t.Run("failed UDP associate", func(t *testing.T) {
@@ -290,7 +317,7 @@ func TestHandleUDPAssociate(t *testing.T) {
 
 		// Check error response
 		resp := conn.WriteBuf.Bytes()
-		if len(resp) < 10 || resp[0] != 0x05 || resp[1] != 0x05 {
+		if len(resp) < 10 || resp[0] != 0x05 || resp[1] != config.SOCKS5ReplyGeneralFailure {
 			t.Errorf("Invalid error response: %v", resp)
 		}
 	})
@@ -298,24 +325,24 @@ func TestHandleUDPAssociate(t *testing.T) {
 
 // TestBufferPool tests UDP buffer pool
 func TestBufferPool(t *testing.T) {
-	buf1 := getUDPBuffer()
+	buf1 := udpBufferPool.Get()
 	if buf1 == nil || len(*buf1) != udpBufSize {
-		t.Errorf("getUDPBuffer() returned invalid buffer")
+		t.Errorf("udpBufferPool.Get() returned invalid buffer")
 	}
 
-	putUDPBuffer(buf1)
+	udpBufferPool.Put(buf1)
 
-	buf2 := getUDPBuffer()
+	buf2 := udpBufferPool.Get()
 	if buf2 == nil || len(*buf2) != udpBufSize {
-		t.Errorf("getUDPBuffer() after put returned invalid buffer")
+		t.Errorf("udpBufferPool.Get() after put returned invalid buffer")
 	}
 
 	// Test putting nil buffer
-	putUDPBuffer(nil)
+	udpBufferPool.Put(nil)
 
 	// Test putting wrong size buffer
 	wrongSize := make([]byte, 100)
-	putUDPBuffer(&wrongSize)
+	udpBufferPool.Put(&wrongSize)
 }
 
 // TestWriteReadTargetHeader tests target header encoding/decoding
@@ -522,7 +549,7 @@ func TestHandleSOCKS5Client(t *testing.T) {
 
 		var clientWg sync.WaitGroup
 		clientWg.Add(1)
-		handleSOCKS5Client(context.Background(), conn, dialTCP, dialUDP, &clientWg)
+		handleSOCKS5Client(context.Background(), conn, config.DefaultTCPBufSize, dialTCP, dialUDP, &clientWg)
 
 		// Check that unsupported command response was sent
 		resp := conn.WriteBuf.Bytes()
@@ -551,7 +578,7 @@ func TestServeSOCKS5_ContextCancellation(t *testing.T) {
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- ServeSOCKS5(ctx, "127.0.0.1:0", dialTCP, dialUDP)
+		errChan <- ServeSOCKS5(ctx, "127.0.0.1:0", config.DefaultTCPBufSize, dialTCP, dialUDP)
 	}()
 
 	// Give the server time to start
@@ -606,7 +633,7 @@ func TestSOCKS5_ConcurrentRequests(t *testing.T) {
 
 			var clientWg sync.WaitGroup
 			clientWg.Add(1)
-			handleSOCKS5Client(context.Background(), conn, dialTCP, dialUDP, &clientWg)
+			handleSOCKS5Client(context.Background(), conn, config.DefaultTCPBufSize, dialTCP, dialUDP, &clientWg)
 		}()
 	}
 

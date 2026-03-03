@@ -38,7 +38,7 @@ func TestHandshakeErrors(t *testing.T) {
 				conn.ReadBuf = bytes.NewBuffer([]byte{0x05, 0x00}) // version 5, 0 methods
 				return conn
 			},
-			wantErr: false, // Current implementation accepts 0 methods
+			wantErr: true,
 		},
 		{
 			name: "unsupported SOCKS version",
@@ -86,7 +86,7 @@ func TestRequestParsingErrors(t *testing.T) {
 				192, 168, 1, 1,
 				0x00, 0x50,
 			},
-			wantErr: false, // RSV is ignored in implementation
+			wantErr: true,
 		},
 		{
 			name: "domain name too long",
@@ -132,17 +132,17 @@ func TestConnectCommandErrors(t *testing.T) {
 		{
 			name:         "connection refused",
 			dialErr:      errors.New("connection refused"),
-			wantRespCode: 0x05, // Connection refused
+			wantRespCode: config.SOCKS5ReplyGeneralFailure,
 		},
 		{
 			name:         "network unreachable",
 			dialErr:      errors.New("network unreachable"),
-			wantRespCode: 0x05, // General failure
+			wantRespCode: config.SOCKS5ReplyGeneralFailure,
 		},
 		{
 			name:         "timeout",
 			dialErr:      context.DeadlineExceeded,
-			wantRespCode: 0x05, // General failure
+			wantRespCode: config.SOCKS5ReplyGeneralFailure,
 		},
 	}
 
@@ -154,7 +154,7 @@ func TestConnectCommandErrors(t *testing.T) {
 				return nil, tt.dialErr
 			}
 
-			handleConnectCommand(context.Background(), conn, "example.com:80", "127.0.0.1:12345", dialTCP)
+			handleConnectCommand(context.Background(), conn, "example.com:80", "127.0.0.1:12345", config.DefaultTCPBufSize, dialTCP)
 
 			resp := conn.WriteBuf.Bytes()
 			if len(resp) < 2 {
@@ -180,12 +180,12 @@ func TestUDPAssociateErrors(t *testing.T) {
 		{
 			name:         "bind failed",
 			dialErr:      errors.New("bind: address already in use"),
-			wantRespCode: 0x05, // General failure
+			wantRespCode: config.SOCKS5ReplyGeneralFailure,
 		},
 		{
 			name:         "permission denied",
 			dialErr:      errors.New("bind: permission denied"),
-			wantRespCode: 0x05, // General failure
+			wantRespCode: config.SOCKS5ReplyGeneralFailure,
 		},
 	}
 
@@ -229,7 +229,7 @@ func TestContextCancellation(t *testing.T) {
 		// Cancel immediately
 		cancel()
 
-		handleConnectCommand(ctx, conn, "example.com:80", "127.0.0.1:12345", dialTCP)
+		handleConnectCommand(ctx, conn, "example.com:80", "127.0.0.1:12345", config.DefaultTCPBufSize, dialTCP)
 
 		// Should send error response
 		resp := conn.WriteBuf.Bytes()
@@ -240,7 +240,8 @@ func TestContextCancellation(t *testing.T) {
 
 	t.Run("cancel during UDP associate", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
-		conn := testutil.NewMockConn()
+		serverConn, clientConn := net.Pipe()
+		defer clientConn.Close()
 
 		udpAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 5000}
 		closer := testutil.NewMockCloser()
@@ -249,16 +250,31 @@ func TestContextCancellation(t *testing.T) {
 			return udpAddr, closer, nil
 		}
 
-		go handleUDPAssociate(ctx, conn, "127.0.0.1:12345", dialUDP)
-		time.Sleep(10 * time.Millisecond)
+		done := make(chan struct{})
+		go func() {
+			handleUDPAssociate(ctx, serverConn, "127.0.0.1:12345", dialUDP)
+			close(done)
+		}()
+
+		resp := make([]byte, 10)
+		if _, err := io.ReadFull(clientConn, resp); err != nil {
+			t.Fatalf("failed to read UDP associate response: %v", err)
+		}
 
 		// Cancel context
 		cancel()
-		time.Sleep(10 * time.Millisecond)
 
-		// Connection should be closed
-		if !conn.Closed {
-			t.Error("Connection should be closed after context cancellation")
+		clientConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		var buf [1]byte
+		_, err := clientConn.Read(buf[:])
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("expected connection close after cancellation, got %v", err)
+		}
+
+		select {
+		case <-done:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("handleUDPAssociate did not return after context cancellation")
 		}
 	})
 }
@@ -460,7 +476,7 @@ func TestTargetHeaderEdgeCases(t *testing.T) {
 		{
 			name:    "very long target",
 			target:  string(make([]byte, 65535)) + ":80",
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name:    "special characters",

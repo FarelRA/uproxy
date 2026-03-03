@@ -1,10 +1,18 @@
 package kcp
 
 import (
+	crand "crypto/rand"
+	"errors"
 	"net"
 	"testing"
 	"time"
 )
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) {
+	return 0, errInvalidOperation
+}
 
 func TestConfig(t *testing.T) {
 	tests := []struct {
@@ -207,7 +215,13 @@ func TestKCPSessionReadWrite(t *testing.T) {
 	defer serverSess.Close()
 
 	// Create client session
-	clientSess, err := NewConn(serverAddr, nil)
+	clientConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("Failed to create client UDP connection: %v", err)
+	}
+	defer clientConn.Close()
+
+	clientSess, err := NewConn(serverAddr, clientConn)
 	if err != nil {
 		t.Fatalf("Failed to create client KCP session: %v", err)
 	}
@@ -274,5 +288,74 @@ func TestKCPLogType(t *testing.T) {
 	}
 	if IKCP_LOG_ALL == 0 {
 		t.Error("IKCP_LOG_ALL should not be 0")
+	}
+}
+
+func TestNewConnNilPacketConn(t *testing.T) {
+	_, err := NewConn("127.0.0.1:12345", nil)
+	if err == nil {
+		t.Fatal("expected error for nil packet connection")
+	}
+	if !errors.Is(err, errNoPacketConn) {
+		t.Fatalf("expected errNoPacketConn, got %v", err)
+	}
+}
+
+func TestServeConnNilPacketConn(t *testing.T) {
+	_, err := ServeConn(nil)
+	if err == nil {
+		t.Fatal("expected error for nil packet connection")
+	}
+	if !errors.Is(err, errNoPacketConn) {
+		t.Fatalf("expected errNoPacketConn, got %v", err)
+	}
+}
+
+func TestNewConn3NilRemoteAddr(t *testing.T) {
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("failed to create UDP socket: %v", err)
+	}
+	defer conn.Close()
+
+	_, err = NewConn3(1, nil, conn)
+	if err == nil {
+		t.Fatal("expected error for nil remote address")
+	}
+	if !errors.Is(err, errNoRemoteAddr) {
+		t.Fatalf("expected errNoRemoteAddr, got %v", err)
+	}
+}
+
+func TestNewConn2RandReadFailure(t *testing.T) {
+	original := crand.Reader
+	crand.Reader = failingReader{}
+	defer func() {
+		crand.Reader = original
+	}()
+
+	conn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 0})
+	if err != nil {
+		t.Fatalf("failed to create UDP socket: %v", err)
+	}
+	defer conn.Close()
+
+	raddr := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 9999}
+	_, err = NewConn2(raddr, conn)
+	if err == nil {
+		t.Fatal("expected error when random conversation ID generation fails")
+	}
+	if !errors.Is(err, errInvalidOperation) {
+		t.Fatalf("expected errInvalidOperation, got %v", err)
+	}
+}
+
+func TestKCPSetMtuRejectsOversized(t *testing.T) {
+	kcp := NewKCP(1, func([]byte, int) {})
+	if ret := kcp.SetMtu(mtuLimit + 1); ret == 0 {
+		t.Fatalf("expected oversized MTU to be rejected")
+	}
+	if ret := kcp.SetMtu(mtuLimit); ret != 0 {
+		t.Fatalf("expected mtuLimit to be accepted, got %d", ret)
 	}
 }

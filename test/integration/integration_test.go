@@ -5,6 +5,7 @@ import (
 	"context"
 	"log/slog"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,13 +14,28 @@ import (
 	"uproxy/internal/validation"
 )
 
+func createTestTUNManager(t *testing.T) *tun.TUNManager {
+	t.Helper()
+
+	manager, err := tun.NewTUNManager(&tun.Config{}, "tun0", false)
+	if err != nil {
+		msg := strings.ToLower(err.Error())
+		if strings.Contains(msg, "operation not permitted") || strings.Contains(msg, "permission denied") {
+			t.Skipf("skipping TUN integration test without required privileges: %v", err)
+		}
+		t.Fatalf("Failed to create TUN manager: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = manager.Close()
+	})
+
+	return manager
+}
+
 // TestTUNDevicePacketFlow tests the integration between TUN device and packet routing
 func TestTUNDevicePacketFlow(t *testing.T) {
 	// Create TUN manager
-	manager, err := tun.NewTUNManager(&tun.Config{}, "tun0", false)
-	if err != nil {
-		t.Fatalf("Failed to create TUN manager: %v", err)
-	}
+	manager := createTestTUNManager(t)
 	if manager == nil {
 		t.Fatal("TUN manager is nil")
 	}
@@ -172,10 +188,7 @@ func TestPortValidation(t *testing.T) {
 
 // TestTUNManagerConcurrency tests concurrent operations on TUN manager
 func TestTUNManagerConcurrency(t *testing.T) {
-	manager, err := tun.NewTUNManager(&tun.Config{}, "tun0", false)
-	if err != nil {
-		t.Fatalf("Failed to create TUN manager: %v", err)
-	}
+	manager := createTestTUNManager(t)
 	if manager == nil {
 		t.Fatal("TUN manager is nil")
 	}

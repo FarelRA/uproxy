@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
-	"os"
+	"errors"
+	"net"
 	"sync"
 	"testing"
 	"time"
 
 	"uproxy/internal/config"
+	"uproxy/internal/tun"
 )
 
 // TestConnectionManager_GetSSHClient tests thread-safe access to SSH client
@@ -118,9 +120,9 @@ func TestValidateMode(t *testing.T) {
 			wantErr: true, // socks5 requires --listen
 		},
 		{
-			name:    "tun mode requires root",
+			name:    "tun mode is valid at config level",
 			cfg:     &config.ClientConfig{Mode: "tun"},
-			wantErr: os.Geteuid() != 0, // Expect error if not root
+			wantErr: false, // Privilege check happens at runtime, not validation
 		},
 		{
 			name:    "valid auto mode",
@@ -269,11 +271,50 @@ func TestConnectionManager_HandleConnectivityFailure(t *testing.T) {
 	}
 	cm := newConnectionManager(cfg, nil)
 
-	// Test that handleConnectivityFailure doesn't panic with nil diagnostics
-	// This is a basic smoke test - the actual failure handler requires
-	// diagnostics to be set up, which happens in establishConnection.
-	// For now, just verify the connectionManager can be created without panicking.
-	if cm.diagnostics != nil {
-		t.Error("Expected nil diagnostics before establishConnection")
+	// Basic smoke test for manager creation without panic.
+	if cm == nil {
+		t.Fatal("expected non-nil connection manager")
+	}
+}
+
+func TestShouldFallbackToSOCKS5(t *testing.T) {
+	if !shouldFallbackToSOCKS5(tun.ErrTUNNotSupported) {
+		t.Fatal("expected fallback for ErrTUNNotSupported")
+	}
+	if shouldFallbackToSOCKS5(errors.New("channel type not supported")) {
+		t.Fatal("expected no fallback for non-sentinel errors")
+	}
+}
+
+func TestWaitForSSHClientContextCancel(t *testing.T) {
+	cm := newConnectionManager(&config.ClientConfig{}, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	client, err := waitForSSHClient(ctx, cm)
+	if err == nil {
+		t.Fatal("expected context cancellation error")
+	}
+	if client != nil {
+		t.Fatal("expected nil client on cancellation")
+	}
+}
+
+func TestStartSOCKS5ProxyBindFailure(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to reserve port: %v", err)
+	}
+	defer listener.Close()
+
+	cfg := &config.ClientConfig{ListenAddr: listener.Addr().String()}
+	cm := newConnectionManager(cfg, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	err = startSOCKS5Proxy(ctx, cfg, cm)
+	if err == nil {
+		t.Fatal("expected bind failure error")
 	}
 }

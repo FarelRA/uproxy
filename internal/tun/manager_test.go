@@ -1,9 +1,12 @@
 package tun
 
 import (
+	"bytes"
+	"strings"
 	"sync"
 	"testing"
 
+	"uproxy/internal/framing"
 	"uproxy/internal/testutil"
 )
 
@@ -252,6 +255,33 @@ func TestMultipleClientsWithDifferentIPs(t *testing.T) {
 	}
 }
 
+func TestAllocateAndNotifyClientWritesFramedAssignment(t *testing.T) {
+	mgr := &TUNManager{
+		clients:   make(map[string]*ClientRoute),
+		allocator: NewIPAllocator("10.0.0.1", "255.255.255.0", "fd00::1/64"),
+	}
+
+	channel := testutil.NewMockSSHChannel()
+	route, ipv4, _, err := mgr.AllocateAndNotifyClient(channel)
+	if err != nil {
+		t.Fatalf("AllocateAndNotifyClient failed: %v", err)
+	}
+	if route == nil {
+		t.Fatal("expected non-nil route")
+	}
+	if ipv4 == "" {
+		t.Fatal("expected allocated IPv4")
+	}
+
+	payload, err := framing.ReadFramed(bytes.NewReader(channel.WriteBuf.Bytes()))
+	if err != nil {
+		t.Fatalf("failed to decode framed assignment: %v", err)
+	}
+	if !strings.Contains(string(payload), "IPv4:"+ipv4) {
+		t.Fatalf("expected payload to contain assigned IPv4, got %q", string(payload))
+	}
+}
+
 // TestUnregisterNonexistentClient tests unregistering a client that doesn't exist
 func TestUnregisterNonexistentClient(t *testing.T) {
 	mgr := &TUNManager{
@@ -269,6 +299,30 @@ func TestUnregisterNonexistentClient(t *testing.T) {
 
 	if count != 0 {
 		t.Errorf("Expected 0 clients, got %d", count)
+	}
+}
+
+func TestBuildIPv4NATSubnet(t *testing.T) {
+	tests := []struct {
+		name    string
+		ip      string
+		netmask string
+		want    string
+	}{
+		{name: "valid /24", ip: "10.0.0.1", netmask: "255.255.255.0", want: "10.0.0.0/24"},
+		{name: "valid /16", ip: "172.16.5.10", netmask: "255.255.0.0", want: "172.16.0.0/16"},
+		{name: "missing ip", ip: "", netmask: "255.255.255.0", want: ""},
+		{name: "invalid ip", ip: "invalid", netmask: "255.255.255.0", want: ""},
+		{name: "invalid netmask", ip: "10.0.0.1", netmask: "invalid", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := buildIPv4NATSubnet(tt.ip, tt.netmask)
+			if got != tt.want {
+				t.Fatalf("buildIPv4NATSubnet(%q, %q) = %q, want %q", tt.ip, tt.netmask, got, tt.want)
+			}
+		})
 	}
 }
 
