@@ -118,21 +118,18 @@ func newBufferWriter(buffer []byte, output output_callback) *bufferWriter {
 	}
 }
 
-func (w *bufferWriter) write(data []byte) {
-	need := len(data)
+// writeSegment writes a complete segment (header + data) atomically with a single check
+func (w *bufferWriter) writeSegment(seg *segment) {
+	need := IKCP_OVERHEAD + len(seg.data)
 	if need > w.available() {
-		w.flush()
-	}
-	n := copy(w.buffer[w.pos:], data)
-	w.pos += n
-}
-
-func (w *bufferWriter) writeSegmentHeader(seg *segment) {
-	if IKCP_OVERHEAD > w.available() {
 		w.flush()
 	}
 	seg.encode(w.buffer[w.pos:])
 	w.pos += IKCP_OVERHEAD
+	if len(seg.data) > 0 {
+		copy(w.buffer[w.pos:], seg.data)
+		w.pos += len(seg.data)
+	}
 }
 
 func (w *bufferWriter) available() int {
@@ -751,7 +748,7 @@ func (kcp *KCP) flushAcks(seg *segment, writer *bufferWriter) {
 		// filter jitters caused by bufferbloat
 		if _itimediff(ack.sn, kcp.rcv_nxt) >= 0 || len(kcp.acklist)-1 == i {
 			seg.sn, seg.ts = ack.sn, ack.ts
-			writer.writeSegmentHeader(seg)
+			writer.writeSegment(seg)
 			kcp.debugLog(IKCP_LOG_OUT_ACK, "conv", seg.conv, "sn", seg.sn, "una", seg.una, "ts", seg.ts)
 		}
 	}
@@ -787,13 +784,13 @@ func (kcp *KCP) flushProbes(seg *segment, writer *bufferWriter) {
 	// flush window probing commands
 	if (kcp.probe & IKCP_ASK_SEND) != 0 {
 		seg.cmd = IKCP_CMD_WASK
-		writer.writeSegmentHeader(seg)
+		writer.writeSegment(seg)
 		kcp.debugLog(IKCP_LOG_OUT_WASK, "conv", seg.conv, "wnd", seg.wnd, "ts", seg.ts)
 	}
 
 	if (kcp.probe & IKCP_ASK_TELL) != 0 {
 		seg.cmd = IKCP_CMD_WINS
-		writer.writeSegmentHeader(seg)
+		writer.writeSegment(seg)
 		kcp.debugLog(IKCP_LOG_OUT_WINS, "conv", seg.conv, "wnd", seg.wnd, "ts", seg.ts)
 	}
 
@@ -848,12 +845,7 @@ func (kcp *KCP) flushSegments(seg *segment, writer *bufferWriter, cwnd, resent u
 			segment.wnd = seg.wnd
 			segment.una = seg.una
 
-			need := IKCP_OVERHEAD + len(segment.data)
-			if need > writer.available() {
-				writer.flush()
-			}
-			writer.writeSegmentHeader(segment)
-			writer.write(segment.data)
+			writer.writeSegment(segment)
 
 			kcp.debugLog(IKCP_LOG_OUT_PUSH, "conv", segment.conv, "sn", segment.sn, "frg", segment.frg, "una", segment.una, "ts", segment.ts, "xmit", segment.xmit, "datalen", len(segment.data))
 
