@@ -123,8 +123,8 @@ func (w *bufferWriter) write(data []byte) {
 	if need > w.available() {
 		w.flush()
 	}
-	copy(w.buffer[w.pos:], data)
-	w.pos += need
+	n := copy(w.buffer[w.pos:], data)
+	w.pos += n
 }
 
 func (w *bufferWriter) writeSegmentHeader(seg *segment) {
