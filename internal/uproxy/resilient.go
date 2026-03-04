@@ -204,32 +204,37 @@ func (r *ResilientPacketConn) reconnectSync() {
 		interval := r.reconnectInt
 		r.mu.RUnlock()
 
-		addr, err := BindAddrForInterface(r.bindAddr, r.iface)
+		// Always bind to all interfaces instead of specific interface
+		// Format ":port" means "all interfaces on this port"
+		// OS automatically routes through any available interface - no manual rebinding needed!
+		bindAddr := r.bindAddr
+		if bindAddr == "" {
+			bindAddr = ":0" // All interfaces, any port (client mode)
+		}
+
+		udpAddr, err := net.ResolveUDPAddr("udp", bindAddr)
 		if err == nil {
-			udpAddr, err := net.ResolveUDPAddr("udp", addr)
+			conn, err := net.ListenUDP("udp", udpAddr)
 			if err == nil {
-				conn, err := net.ListenUDP("udp", udpAddr)
-				if err == nil {
-					OptimizeUDPConn(conn, r.sockBuf)
+				OptimizeUDPConn(conn, r.sockBuf)
 
-					// Atomically swap to new connection (no gap!)
-					r.mu.Lock()
-					r.conn = conn
-					r.mu.Unlock()
+				// Atomically swap to new connection (no gap!)
+				r.mu.Lock()
+				r.conn = conn
+				r.mu.Unlock()
 
-					// NOW close old connection after new one is active
-					if oldConn != nil {
-						if err := oldConn.Close(); err != nil {
-							slog.Debug("Failed to close old connection after rebind", "error", err)
-						}
+				// NOW close old connection after new one is active
+				if oldConn != nil {
+					if err := oldConn.Close(); err != nil {
+						slog.Debug("Failed to close old connection after rebind", "error", err)
 					}
-
-					if r.telemetry != nil {
-						r.telemetry.RecordRebind()
-					}
-					slog.Info("Successfully bound resilient UDP socket", "layer", "resilient", "addr", udpAddr.String())
-					return
 				}
+
+				if r.telemetry != nil {
+					r.telemetry.RecordRebind()
+				}
+				slog.Info("Successfully bound resilient UDP socket", "layer", "resilient", "addr", udpAddr.String())
+				return
 			}
 		}
 
