@@ -95,5 +95,5 @@ const (
 	LocalhostIPv4                   = "127.0.0.1"
 	DevTTYPath                      = "/dev/tty"
 	DefaultMaxConcurrentConnections = 1000
-	DefaultClientBindAddr           = ":6000" // Same as server default for consistency
+	DefaultClientBindAddr           = ":0" // All interfaces, any available port (OS chooses)
 )
