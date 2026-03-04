@@ -63,6 +63,7 @@ func AddClientFlags(cmd *cobra.Command, cfg *ClientConfig) {
 	cmd.Flags().StringVarP(&cfg.Mode, "mode", "m", "auto", "Proxy mode (auto, socks5, tun)")
 	cmd.Flags().StringVarP(&cfg.ListenAddr, "listen", "l", "127.0.0.1:1080", "SOCKS5 listen address (host:port)")
 	cmd.Flags().StringVarP(&cfg.ServerAddr, "server", "s", "", "Server address (host:port) [required]")
+	cmd.Flags().StringVar(&cfg.BindAddr, "bind-addr", DefaultClientBindAddr, "UDP bind address for KCP connection")
 	cmd.Flags().DurationVar(&cfg.SSHTimeout, "ssh-timeout", DefaultSSHTimeout, "SSH connection timeout")
 
 	// SSH client flags

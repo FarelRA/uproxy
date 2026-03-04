@@ -93,6 +93,7 @@ type ClientConfig struct {
 	Mode       string
 	ListenAddr string
 	ServerAddr string
+	BindAddr   string // UDP bind address for KCP connection
 
 	SSHTimeout time.Duration
 
@@ -152,6 +153,7 @@ func NewDefaultClientConfig() ClientConfig {
 		CommonConfig: NewDefaultCommonConfig(),
 		Mode:         "auto",
 		ListenAddr:   "127.0.0.1:1080",
+		BindAddr:     DefaultClientBindAddr,
 		SSHTimeout:   DefaultSSHTimeout,
 		TUN: TUNClientConfig{
 			Name:      "tun0",
