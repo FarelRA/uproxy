@@ -189,7 +189,7 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 // createPacketConn creates and configures the resilient packet connection
 func (cm *connectionManager) createPacketConn() (*uproxy.ResilientPacketConn, error) {
 	packetConn := uproxy.NewResilientPacketConn(
-		"",
+		":0", // All interfaces, any port (client mode default)
 		"",
 		cm.cfg.ReconnectInterval,
 		cm.cfg.UDPSockBuf,

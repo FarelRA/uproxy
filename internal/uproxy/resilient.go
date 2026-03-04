@@ -207,12 +207,7 @@ func (r *ResilientPacketConn) reconnectSync() {
 		// Always bind to all interfaces instead of specific interface
 		// Format ":port" means "all interfaces on this port"
 		// OS automatically routes through any available interface - no manual rebinding needed!
-		bindAddr := r.bindAddr
-		if bindAddr == "" {
-			bindAddr = ":0" // All interfaces, any port (client mode)
-		}
-
-		udpAddr, err := net.ResolveUDPAddr("udp", bindAddr)
+		udpAddr, err := net.ResolveUDPAddr("udp", r.bindAddr)
 		if err == nil {
 			conn, err := net.ListenUDP("udp", udpAddr)
 			if err == nil {
