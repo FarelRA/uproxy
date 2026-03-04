@@ -160,24 +160,7 @@ func newUDPSession(conv uint32, l *Listener, conn net.PacketConn, ownConn bool, 
 	sess.recvbuf = make([]byte, mtuLimit)
 	sess.initPlatform()
 
-	sess.kcp = NewKCP(conv, func(buf []byte, size int) {
-		// A basic check for the minimum packet size
-		if size >= IKCP_OVERHEAD {
-			// make a copy
-			bts := defaultBufferPool.Get()
-			copy(bts, buf[:size])
-
-			// delivery to post processing (non-blocking to avoid deadlock under lock)
-			select {
-			case sess.chPostProcessing <- sendRequest{buffer: bts[:size]}:
-			case <-sess.die:
-				return
-			default:
-				// drop and recycle to avoid blocking; KCP will retransmit if needed
-				defaultBufferPool.Put(bts)
-			}
-		}
-	})
+	sess.kcp = NewKCP(conv, sess.kcpOutput)
 
 	// Set Default MTU
 	if !sess.SetMtu(IKCP_MTU_DEF) {
@@ -186,13 +169,6 @@ func newUDPSession(conv uint32, l *Listener, conn net.PacketConn, ownConn bool, 
 
 	// create post-processing goroutine
 	go sess.postProcess()
-
-	if sess.l == nil { // it's a client connection
-		go sess.readLoop()
-		atomic.AddUint64(&DefaultSnmp.ActiveOpens, 1)
-	} else {
-		atomic.AddUint64(&DefaultSnmp.PassiveOpens, 1)
-	}
 
 	// start per-session updater
 	SystemTimedSched.Put(sess.update, time.Now())
@@ -204,6 +180,25 @@ func newUDPSession(conv uint32, l *Listener, conn net.PacketConn, ownConn bool, 
 	}
 
 	return sess
+}
+
+// kcpOutput handles KCP output by copying to buffer pool and sending non-blocking
+func (s *UDPSession) kcpOutput(buf []byte, size int) {
+	if size < IKCP_OVERHEAD {
+		return
+	}
+
+	// Get buffer from pool and copy data
+	bts := defaultBufferPool.Get()
+	copy(bts, buf[:size])
+
+	// Non-blocking send to avoid deadlock; drop packet if channel full (KCP will retransmit)
+	select {
+	case s.chPostProcessing <- sendRequest{buffer: bts[:size]}:
+	case <-s.die:
+	default:
+		defaultBufferPool.Put(bts)
+	}
 }
 
 // Read implements net.Conn
