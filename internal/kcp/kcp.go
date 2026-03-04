@@ -849,15 +849,11 @@ func (kcp *KCP) flushSegments(seg *segment, writer *bufferWriter, cwnd, resent u
 			segment.una = seg.una
 
 			need := IKCP_OVERHEAD + len(segment.data)
-			// Ensure we have enough space for the entire segment
 			if need > writer.available() {
 				writer.flush()
 			}
-			// Write segment atomically without intermediate flushes
-			seg.encode(writer.buffer[writer.pos:])
-			writer.pos += IKCP_OVERHEAD
-			copy(writer.buffer[writer.pos:], segment.data)
-			writer.pos += len(segment.data)
+			writer.writeSegmentHeader(segment)
+			writer.write(segment.data)
 
 			kcp.debugLog(IKCP_LOG_OUT_PUSH, "conv", segment.conv, "sn", segment.sn, "frg", segment.frg, "una", segment.una, "ts", segment.ts, "xmit", segment.xmit, "datalen", len(segment.data))
 
