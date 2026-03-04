@@ -19,7 +19,7 @@ type ConnectivityMonitor struct {
 
 // NewConnectivityMonitor creates a new connectivity monitor with default timeouts
 func NewConnectivityMonitor(onFailure func()) *ConnectivityMonitor {
-	return NewConnectivityMonitorWithTimeouts(onFailure, 250*time.Millisecond, 30*time.Second, 500*time.Millisecond)
+	return NewConnectivityMonitorWithTimeouts(onFailure, 250*time.Millisecond, 30*time.Second, 4*time.Second)
 }
 
 // NewConnectivityMonitorWithTimeouts creates a new connectivity monitor with custom timeouts
