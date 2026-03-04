@@ -102,6 +102,50 @@ type output_callback func(buf []byte, size int)
 // logoutput_callback is a prototype which logging kcp trace output
 type logoutput_callback func(msg string, args ...any)
 
+// bufferWriter simplifies buffer management by encapsulating position tracking
+// and automatic flushing when space is insufficient
+type bufferWriter struct {
+	buffer []byte
+	pos    int
+	output output_callback
+}
+
+func newBufferWriter(buffer []byte, output output_callback) *bufferWriter {
+	return &bufferWriter{
+		buffer: buffer,
+		pos:    0,
+		output: output,
+	}
+}
+
+func (w *bufferWriter) write(data []byte) {
+	need := len(data)
+	if need > w.available() {
+		w.flush()
+	}
+	copy(w.buffer[w.pos:], data)
+	w.pos += need
+}
+
+func (w *bufferWriter) writeSegmentHeader(seg *segment) {
+	if IKCP_OVERHEAD > w.available() {
+		w.flush()
+	}
+	seg.encode(w.buffer[w.pos:])
+	w.pos += IKCP_OVERHEAD
+}
+
+func (w *bufferWriter) available() int {
+	return len(w.buffer) - w.pos
+}
+
+func (w *bufferWriter) flush() {
+	if w.pos > 0 {
+		w.output(w.buffer, w.pos)
+		w.pos = 0
+	}
+}
+
 func _itimediff(later, earlier uint32) int32 {
 	return (int32)(later - earlier)
 }
@@ -698,26 +742,24 @@ func (kcp *KCP) wnd_unused() uint16 {
 
 // flush pending data
 // flushAcks flushes pending acknowledgements
-func (kcp *KCP) flushAcks(seg *segment, ptr []byte, makeSpace func(int)) []byte {
+func (kcp *KCP) flushAcks(seg *segment, writer *bufferWriter) {
 	if len(kcp.acklist) == 0 {
-		return ptr
+		return
 	}
 
 	for i, ack := range kcp.acklist {
-		makeSpace(IKCP_OVERHEAD)
 		// filter jitters caused by bufferbloat
 		if _itimediff(ack.sn, kcp.rcv_nxt) >= 0 || len(kcp.acklist)-1 == i {
 			seg.sn, seg.ts = ack.sn, ack.ts
-			ptr = seg.encode(ptr)
+			writer.writeSegmentHeader(seg)
 			kcp.debugLog(IKCP_LOG_OUT_ACK, "conv", seg.conv, "sn", seg.sn, "una", seg.una, "ts", seg.ts)
 		}
 	}
 	kcp.acklist = kcp.acklist[0:0]
-	return ptr
 }
 
 // flushProbes handles window probing logic
-func (kcp *KCP) flushProbes(seg *segment, ptr []byte, makeSpace func(int)) []byte {
+func (kcp *KCP) flushProbes(seg *segment, writer *bufferWriter) {
 	// probe window size (if remote window size equals zero)
 	if kcp.rmt_wnd == 0 {
 		current := currentMs()
@@ -745,24 +787,21 @@ func (kcp *KCP) flushProbes(seg *segment, ptr []byte, makeSpace func(int)) []byt
 	// flush window probing commands
 	if (kcp.probe & IKCP_ASK_SEND) != 0 {
 		seg.cmd = IKCP_CMD_WASK
-		makeSpace(IKCP_OVERHEAD)
-		ptr = seg.encode(ptr)
+		writer.writeSegmentHeader(seg)
 		kcp.debugLog(IKCP_LOG_OUT_WASK, "conv", seg.conv, "wnd", seg.wnd, "ts", seg.ts)
 	}
 
 	if (kcp.probe & IKCP_ASK_TELL) != 0 {
 		seg.cmd = IKCP_CMD_WINS
-		makeSpace(IKCP_OVERHEAD)
-		ptr = seg.encode(ptr)
+		writer.writeSegmentHeader(seg)
 		kcp.debugLog(IKCP_LOG_OUT_WINS, "conv", seg.conv, "wnd", seg.wnd, "ts", seg.ts)
 	}
 
 	kcp.probe = 0
-	return ptr
 }
 
 // flushSegments transmits data segments
-func (kcp *KCP) flushSegments(seg *segment, buffer, ptr []byte, makeSpace func(int), cwnd, resent uint32, newSegsCount int) ([]byte, uint32, uint64, uint64, uint64, uint64) {
+func (kcp *KCP) flushSegments(seg *segment, writer *bufferWriter, cwnd, resent uint32, newSegsCount int) (uint32, uint64, uint64, uint64, uint64) {
 	current := currentMs()
 	var change, lostSegs, fastRetransSegs, earlyRetransSegs uint64
 	nextUpdate := kcp.interval
@@ -810,14 +849,11 @@ func (kcp *KCP) flushSegments(seg *segment, buffer, ptr []byte, makeSpace func(i
 			segment.una = seg.una
 
 			need := IKCP_OVERHEAD + len(segment.data)
-			// Check if we need to flush and reset ptr
-			if need > len(ptr) {
-				makeSpace(need) // Flushes buffer and resets outer ptr
-				ptr = buffer    // Reset local ptr to match
+			if need > writer.available() {
+				writer.flush()
 			}
-			ptr = segment.encode(ptr)
-			copy(ptr, segment.data)
-			ptr = ptr[len(segment.data):]
+			writer.writeSegmentHeader(segment)
+			writer.write(segment.data)
 
 			kcp.debugLog(IKCP_LOG_OUT_PUSH, "conv", segment.conv, "sn", segment.sn, "frg", segment.frg, "una", segment.una, "ts", segment.ts, "xmit", segment.xmit, "datalen", len(segment.data))
 
@@ -833,7 +869,7 @@ func (kcp *KCP) flushSegments(seg *segment, buffer, ptr []byte, makeSpace func(i
 		}
 	}
 
-	return ptr, nextUpdate, change, lostSegs, fastRetransSegs, earlyRetransSegs
+	return nextUpdate, change, lostSegs, fastRetransSegs, earlyRetransSegs
 }
 
 func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
@@ -843,28 +879,10 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 	seg.wnd = kcp.wnd_unused()
 	seg.una = kcp.rcv_nxt
 
-	buffer := kcp.buffer
-	ptr := buffer
-
-	// makeSpace makes room for writing
-	makeSpace := func(space int) {
-		size := len(buffer) - len(ptr)
-		if size+space > len(buffer) {
-			kcp.output(buffer, size)
-			ptr = buffer
-		}
-	}
-
-	// flush bytes in buffer if there is any
-	flushBuffer := func() {
-		size := len(buffer) - len(ptr)
-		if size > 0 {
-			kcp.output(buffer, size)
-		}
-	}
+	writer := newBufferWriter(kcp.buffer, kcp.output)
 
 	defer func() {
-		flushBuffer()
+		writer.flush()
 		atomic.StoreUint64(&DefaultSnmp.RingBufferSndQueue, uint64(kcp.snd_queue.Len()))
 		atomic.StoreUint64(&DefaultSnmp.RingBufferRcvQueue, uint64(kcp.rcv_queue.Len()))
 		atomic.StoreUint64(&DefaultSnmp.RingBufferSndBuffer, uint64(kcp.snd_buf.Len()))
@@ -872,11 +890,11 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 
 	// flush acknowledges
 	if flushType == IKCP_FLUSH_ACKONLY || flushType == IKCP_FLUSH_FULL {
-		ptr = kcp.flushAcks(&seg, ptr, makeSpace)
+		kcp.flushAcks(&seg, writer)
 	}
 
 	// flush probes
-	ptr = kcp.flushProbes(&seg, ptr, makeSpace)
+	kcp.flushProbes(&seg, writer)
 
 	// calculate window size
 	cwnd := min(kcp.snd_wnd, kcp.rmt_wnd)
@@ -915,7 +933,7 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 	var change, lostSegs, fastRetransSegs, earlyRetransSegs uint64
 
 	if flushType == IKCP_FLUSH_FULL {
-		ptr, nextUpdate, change, lostSegs, fastRetransSegs, earlyRetransSegs = kcp.flushSegments(&seg, buffer, ptr, makeSpace, cwnd, resent, newSegsCount)
+		nextUpdate, change, lostSegs, fastRetransSegs, earlyRetransSegs = kcp.flushSegments(&seg, writer, cwnd, resent, newSegsCount)
 	}
 
 	// counter updates
