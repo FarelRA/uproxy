@@ -762,7 +762,7 @@ func (kcp *KCP) flushProbes(seg *segment, ptr []byte, makeSpace func(int)) []byt
 }
 
 // flushSegments transmits data segments
-func (kcp *KCP) flushSegments(seg *segment, ptr []byte, makeSpace func(int), cwnd, resent uint32, newSegsCount int) ([]byte, uint32, uint64, uint64, uint64, uint64) {
+func (kcp *KCP) flushSegments(seg *segment, buffer, ptr []byte, makeSpace func(int), cwnd, resent uint32, newSegsCount int) ([]byte, uint32, uint64, uint64, uint64, uint64) {
 	current := currentMs()
 	var change, lostSegs, fastRetransSegs, earlyRetransSegs uint64
 	nextUpdate := kcp.interval
@@ -812,8 +812,8 @@ func (kcp *KCP) flushSegments(seg *segment, ptr []byte, makeSpace func(int), cwn
 			need := IKCP_OVERHEAD + len(segment.data)
 			// Check if we need to flush and reset ptr
 			if need > len(ptr) {
-				makeSpace(need)  // Flushes buffer and resets outer ptr
-				ptr = kcp.buffer // Reset local ptr to match
+				makeSpace(need) // Flushes buffer and resets outer ptr
+				ptr = buffer    // Reset local ptr to match
 			}
 			ptr = segment.encode(ptr)
 			copy(ptr, segment.data)
@@ -915,7 +915,7 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 	var change, lostSegs, fastRetransSegs, earlyRetransSegs uint64
 
 	if flushType == IKCP_FLUSH_FULL {
-		ptr, nextUpdate, change, lostSegs, fastRetransSegs, earlyRetransSegs = kcp.flushSegments(&seg, ptr, makeSpace, cwnd, resent, newSegsCount)
+		ptr, nextUpdate, change, lostSegs, fastRetransSegs, earlyRetransSegs = kcp.flushSegments(&seg, buffer, ptr, makeSpace, cwnd, resent, newSegsCount)
 	}
 
 	// counter updates
