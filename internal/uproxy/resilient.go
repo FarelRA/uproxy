@@ -191,12 +191,8 @@ func (r *ResilientPacketConn) reconnectSync() {
 		r.mu.Unlock()
 		return
 	}
-	if r.conn != nil {
-		if err := r.conn.Close(); err != nil {
-			slog.Debug("Failed to close connection during reconnect", "error", err)
-		}
-		r.conn = nil
-	}
+	// Save old connection reference but DON'T close it yet (make-before-break)
+	oldConn := r.conn
 	r.mu.Unlock()
 
 	for {
@@ -215,9 +211,18 @@ func (r *ResilientPacketConn) reconnectSync() {
 				conn, err := net.ListenUDP("udp", udpAddr)
 				if err == nil {
 					OptimizeUDPConn(conn, r.sockBuf)
+
+					// Atomically swap to new connection (no gap!)
 					r.mu.Lock()
 					r.conn = conn
 					r.mu.Unlock()
+
+					// NOW close old connection after new one is active
+					if oldConn != nil {
+						if err := oldConn.Close(); err != nil {
+							slog.Debug("Failed to close old connection after rebind", "error", err)
+						}
+					}
 
 					if r.telemetry != nil {
 						r.telemetry.RecordRebind()
