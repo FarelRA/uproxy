@@ -40,7 +40,9 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"log/slog"
 	"net"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -572,6 +574,26 @@ func (s *UDPSession) Control(f func(conn net.PacketConn) error) error {
 //
 //	KCP output -> TxQueue
 func (s *UDPSession) postProcess() {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("postProcess panic recovered - attempting to drain remaining packets", "panic", r, "stack", string(debug.Stack()))
+			// Attempt to drain and send remaining packets to prevent loss
+			for len(s.chPostProcessing) > 0 {
+				select {
+				case req := <-s.chPostProcessing:
+					// Try to send the packet
+					var msg ipv4.Message
+					msg.Addr = s.RemoteAddr()
+					msg.Buffers = [][]byte{req.buffer}
+					s.tx([]ipv4.Message{msg})
+					defaultBufferPool.Put(req.buffer)
+				default:
+					return
+				}
+			}
+		}
+	}()
+
 	txqueue := make([]ipv4.Message, 0, devBacklog)
 	chDie := s.die
 

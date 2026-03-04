@@ -41,6 +41,14 @@ func sameUDPAddr(a, b *net.UDPAddr) bool {
 
 // defaultReadLoop is the standard procedure for reading from a connection
 func (s *UDPSession) defaultReadLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			// Log panic and notify about read error to trigger proper cleanup
+			err := errors.Errorf("defaultReadLoop panic: %v", r)
+			s.notifyReadError(errors.WithStack(err))
+		}
+	}()
+
 	buf := make([]byte, mtuLimit)
 
 	var src *net.UDPAddr

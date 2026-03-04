@@ -38,6 +38,14 @@ const (
 
 // readLoop is the optimized version of readLoop for linux utilizing recvmmsg syscall
 func (s *UDPSession) readLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			// Log panic and notify about read error to trigger proper cleanup
+			err := errors.Errorf("readLoop panic: %v", r)
+			s.notifyReadError(errors.WithStack(err))
+		}
+	}()
+
 	// default version
 	if s.platform.batchConn == nil {
 		s.defaultReadLoop()
