@@ -165,7 +165,7 @@ func forwardTUNToSSH(ctx context.Context, iface *water.Interface, sshChan ssh.Ch
 
 		// Basic validation
 		if !ValidatePacket(packet) {
-			slog.Debug("Invalid packet dropped", "size", n)
+			slog.Warn("Dropping invalid packet from TUN device", "size", n)
 			continue
 		}
 
@@ -220,7 +220,7 @@ func forwardSSHToTUN(ctx context.Context, sshChan ssh.Channel, iface *water.Inte
 
 		// Basic validation
 		if !ValidatePacket(packet) {
-			slog.Debug("Invalid packet dropped", "size", len(packet))
+			slog.Warn("Dropping invalid packet from SSH channel", "size", len(packet))
 			continue
 		}
 
@@ -339,7 +339,7 @@ func HandleTUN(channel ssh.Channel, manager *TUNManager) {
 
 		// Basic validation
 		if !ValidatePacket(packet) {
-			slog.Debug("Invalid packet dropped", "client_ipv4", clientIPv4, "size", len(packet))
+			slog.Warn("Dropping invalid packet from SSH channel", "client_ipv4", clientIPv4, "size", len(packet))
 			continue
 		}
 

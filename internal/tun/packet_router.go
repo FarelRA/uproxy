@@ -55,6 +55,7 @@ func (pr *PacketRouter) dispatchPackets() {
 		}
 
 		if n < 20 {
+			slog.Warn("Dropping packet: too small to be valid IP", "size", n, "min_required", 20)
 			continue // Too small to be valid IP packet
 		}
 
@@ -63,6 +64,7 @@ func (pr *PacketRouter) dispatchPackets() {
 		// Parse destination IP from packet
 		dstIP, ok := pr.parsePacketDestination(packet, n)
 		if !ok {
+			slog.Warn("Dropping packet: failed to parse destination IP", "size", n)
 			continue
 		}
 
@@ -95,6 +97,7 @@ func (pr *PacketRouter) routePacketToClient(packet []byte, dstIP string) {
 	route, exists := pr.clientRegistry.GetClient(dstIP)
 	if !exists {
 		// No client with this IP, drop packet
+		slog.Warn("Dropping packet: no client registered for destination IP", "dst_ip", dstIP, "size", len(packet))
 		return
 	}
 
