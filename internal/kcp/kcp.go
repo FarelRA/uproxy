@@ -30,32 +30,28 @@ import (
 )
 
 const (
-	IKCP_RTO_NDL       = 30  // no delay min rto
-	IKCP_RTO_MIN       = 100 // normal min rto
-	IKCP_RTO_DEF       = 200
-	IKCP_RTO_MAX       = 60000
-	IKCP_CMD_PUSH      = 81 // cmd: push data
-	IKCP_CMD_ACK       = 82 // cmd: ack
-	IKCP_CMD_WASK      = 83 // cmd: window probe (ask)
-	IKCP_CMD_WINS      = 84 // cmd: window size (tell)
-	IKCP_ASK_SEND      = 1  // need to send IKCP_CMD_WASK
-	IKCP_ASK_TELL      = 2  // need to send IKCP_CMD_WINS
-	IKCP_WND_SND       = 32
-	IKCP_WND_RCV       = 128 // must >= max fragment size
-	IKCP_MTU_DEF       = 1400
-	IKCP_ACK_FAST      = 3
-	IKCP_INTERVAL      = 100
-	IKCP_OVERHEAD      = 24
-	IKCP_DEADLINK      = 20
-	IKCP_THRESH_INIT   = 2
-	IKCP_THRESH_MIN    = 2
-	IKCP_PROBE_INIT    = 7000   // 7 secs to probe window size
-	IKCP_PROBE_LIMIT   = 120000 // up to 120 secs to probe window
-	IKCP_FASTACK_LIMIT = 5      // max times to trigger fastack
-
-	// IKCP_BUFFER_MULTIPLIER determines flush buffer size as multiple of (MTU+OVERHEAD)
-	// Value of 3 allows batching multiple segments in a single flush for efficiency
-	IKCP_BUFFER_MULTIPLIER = 3
+	IKCP_RTO_NDL     = 30  // no delay min rto
+	IKCP_RTO_MIN     = 100 // normal min rto
+	IKCP_RTO_DEF     = 200
+	IKCP_RTO_MAX     = 60000
+	IKCP_CMD_PUSH    = 81 // cmd: push data
+	IKCP_CMD_ACK     = 82 // cmd: ack
+	IKCP_CMD_WASK    = 83 // cmd: window probe (ask)
+	IKCP_CMD_WINS    = 84 // cmd: window size (tell)
+	IKCP_ASK_SEND    = 1  // need to send IKCP_CMD_WASK
+	IKCP_ASK_TELL    = 2  // need to send IKCP_CMD_WINS
+	IKCP_WND_SND     = 32
+	IKCP_WND_RCV     = 32
+	IKCP_MTU_DEF     = 1400
+	IKCP_ACK_FAST    = 3
+	IKCP_INTERVAL    = 100
+	IKCP_OVERHEAD    = 24
+	IKCP_DEADLINK    = 20
+	IKCP_THRESH_INIT = 2
+	IKCP_THRESH_MIN  = 2
+	IKCP_PROBE_INIT  = 500    // 500ms to probe window size
+	IKCP_PROBE_LIMIT = 120000 // up to 120 secs to probe window
+	IKCP_SN_OFFSET   = 12
 )
 
 type PacketType int8
@@ -103,14 +99,8 @@ func currentMs() uint32 { return uint32(time.Since(refTime) / time.Millisecond) 
 // output_callback is a prototype which ought capture conn and call conn.Write
 type output_callback func(buf []byte, size int)
 
-// logoutput_callback is a prototype for logging KCP internal events
-type logoutput_callback func(log string, kcp *KCP, user any)
-
-// calculateBufferSize returns the optimal buffer size for the given MTU,
-// capped at mtuLimit to prevent buffer pool overflow
-func calculateBufferSize(mtu int) int {
-	return min((mtu+IKCP_OVERHEAD)*IKCP_BUFFER_MULTIPLIER, mtuLimit)
-}
+// logoutput_callback is a prototype which logging kcp trace output
+type logoutput_callback func(msg string, args ...any)
 
 // bufferWriter simplifies buffer management by encapsulating position tracking
 // and automatic flushing when space is insufficient
@@ -278,7 +268,7 @@ func NewKCP(conv uint32, output output_callback) *KCP {
 	kcp.rmt_wnd = IKCP_WND_RCV
 	kcp.mtu = IKCP_MTU_DEF
 	kcp.mss = kcp.mtu - IKCP_OVERHEAD
-	kcp.buffer = make([]byte, calculateBufferSize(int(kcp.mtu)))
+	kcp.buffer = make([]byte, min((kcp.mtu+IKCP_OVERHEAD)*3, mtuLimit))
 	kcp.rx_rto = IKCP_RTO_DEF
 	kcp.rx_minrto = IKCP_RTO_MIN
 	kcp.interval = IKCP_INTERVAL
@@ -882,10 +872,9 @@ func (kcp *KCP) flush(flushType FlushType) (nextUpdate uint32) {
 	seg.una = kcp.rcv_nxt
 
 	writer := newBufferWriter(kcp.buffer, kcp.output)
-	defer writer.flush()
 
-	// Update SNMP statistics
 	defer func() {
+		writer.flush()
 		atomic.StoreUint64(&DefaultSnmp.RingBufferSndQueue, uint64(kcp.snd_queue.Len()))
 		atomic.StoreUint64(&DefaultSnmp.RingBufferRcvQueue, uint64(kcp.rcv_queue.Len()))
 		atomic.StoreUint64(&DefaultSnmp.RingBufferSndBuffer, uint64(kcp.snd_buf.Len()))
@@ -991,7 +980,7 @@ func (kcp *KCP) SetMtu(mtu int) int {
 
 	kcp.mtu = uint32(mtu)
 	kcp.mss = kcp.mtu - IKCP_OVERHEAD
-	kcp.buffer = make([]byte, calculateBufferSize(mtu))
+	kcp.buffer = make([]byte, min((mtu+IKCP_OVERHEAD)*3, mtuLimit))
 	return 0
 }
 
