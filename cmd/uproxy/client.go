@@ -185,6 +185,7 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 
 	// Create QUIC client with configuration from flags
 	quicOpts := quictransport.QUICConfigOptions{
+		HandshakeIdleTimeout:           cm.cfg.QUIC.HandshakeIdleTimeout,
 		MaxIdleTimeout:                 cm.cfg.QUIC.MaxIdleTimeout,
 		MaxIncomingStreams:             cm.cfg.QUIC.MaxIncomingStreams,
 		MaxIncomingUniStreams:          cm.cfg.QUIC.MaxIncomingUniStreams,
@@ -193,8 +194,10 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 		InitialConnectionReceiveWindow: cm.cfg.QUIC.InitialConnectionReceiveWindow,
 		MaxConnectionReceiveWindow:     cm.cfg.QUIC.MaxConnectionReceiveWindow,
 		KeepAlivePeriod:                cm.cfg.QUIC.KeepAlivePeriod,
+		InitialPacketSize:              cm.cfg.QUIC.InitialPacketSize,
 		DisablePathMTUDiscovery:        cm.cfg.QUIC.DisablePathMTUDiscovery,
 		Enable0RTT:                     cm.cfg.QUIC.Enable0RTT,
+		EnableDatagrams:                cm.cfg.QUIC.EnableDatagrams,
 	}
 	quicConfig := quictransport.NewQUICConfig(&quicOpts)
 

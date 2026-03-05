@@ -36,6 +36,7 @@ var (
 
 // QUICConfigOptions contains options for creating a QUIC configuration.
 type QUICConfigOptions struct {
+	HandshakeIdleTimeout           time.Duration
 	MaxIdleTimeout                 time.Duration
 	KeepAlivePeriod                time.Duration
 	MaxIncomingStreams             int64
@@ -44,13 +45,16 @@ type QUICConfigOptions struct {
 	MaxStreamReceiveWindow         uint64
 	InitialConnectionReceiveWindow uint64
 	MaxConnectionReceiveWindow     uint64
+	InitialPacketSize              uint16
 	DisablePathMTUDiscovery        bool
 	Enable0RTT                     bool
+	EnableDatagrams                bool
 }
 
 // DefaultQUICConfigOptions returns the default QUIC configuration options.
 func DefaultQUICConfigOptions() *QUICConfigOptions {
 	return &QUICConfigOptions{
+		HandshakeIdleTimeout:           10 * time.Second,
 		MaxIdleTimeout:                 DefaultMaxIdleTimeout,
 		KeepAlivePeriod:                DefaultKeepAlivePeriod,
 		MaxIncomingStreams:             DefaultMaxIncomingStreams,
@@ -59,8 +63,10 @@ func DefaultQUICConfigOptions() *QUICConfigOptions {
 		MaxStreamReceiveWindow:         0, // Use QUIC default
 		InitialConnectionReceiveWindow: 0, // Use QUIC default
 		MaxConnectionReceiveWindow:     0, // Use QUIC default
+		InitialPacketSize:              1280,
 		DisablePathMTUDiscovery:        false,
 		Enable0RTT:                     false,
+		EnableDatagrams:                true,
 	}
 }
 
@@ -72,10 +78,19 @@ func NewQUICConfig(opts *QUICConfigOptions) *quic.Config {
 	}
 
 	config := &quic.Config{
-		MaxIdleTimeout:          opts.MaxIdleTimeout,
-		KeepAlivePeriod:         opts.KeepAlivePeriod,
-		DisablePathMTUDiscovery: opts.DisablePathMTUDiscovery,
-		Allow0RTT:               opts.Enable0RTT,
+		HandshakeIdleTimeout:           opts.HandshakeIdleTimeout,
+		MaxIdleTimeout:                 opts.MaxIdleTimeout,
+		MaxIncomingStreams:             opts.MaxIncomingStreams,
+		MaxIncomingUniStreams:          opts.MaxIncomingUniStreams,
+		InitialStreamReceiveWindow:     opts.InitialStreamReceiveWindow,
+		MaxStreamReceiveWindow:         opts.MaxStreamReceiveWindow,
+		InitialConnectionReceiveWindow: opts.InitialConnectionReceiveWindow,
+		MaxConnectionReceiveWindow:     opts.MaxConnectionReceiveWindow,
+		KeepAlivePeriod:                opts.KeepAlivePeriod,
+		InitialPacketSize:              opts.InitialPacketSize,
+		DisablePathMTUDiscovery:        opts.DisablePathMTUDiscovery,
+		Allow0RTT:                      opts.Enable0RTT,
+		EnableDatagrams:                opts.EnableDatagrams,
 	}
 
 	if opts.MaxIncomingStreams > 0 {

@@ -85,6 +85,7 @@ const (
 
 // QUIC Protocol Constants
 const (
+	DefaultQUICHandshakeIdleTimeout           = 10 * time.Second
 	DefaultQUICMaxIdleTimeout                 = 1 * time.Hour
 	DefaultQUICMaxIncomingStreams             = 1000
 	DefaultQUICMaxIncomingUniStreams          = 1000
@@ -93,6 +94,8 @@ const (
 	DefaultQUICInitialConnectionReceiveWindow = 1 * 1024 * 1024  // 1 MB
 	DefaultQUICMaxConnectionReceiveWindow     = 15 * 1024 * 1024 // 15 MB
 	DefaultQUICKeepAlivePeriod                = 30 * time.Second
+	DefaultQUICInitialPacketSize              = 1280 // Minimum safe size for IPv6
 	DefaultQUICDisablePathMTUDiscovery        = false
 	DefaultQUICEnable0RTT                     = false
+	DefaultQUICEnableDatagrams                = true // Enable for UDP support
 )

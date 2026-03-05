@@ -95,6 +95,7 @@ func runServer(ctx context.Context, cfg *config.ServerConfig) (err error) {
 
 	// Create QUIC server with configuration from flags
 	quicOpts := quictransport.QUICConfigOptions{
+		HandshakeIdleTimeout:           cfg.QUIC.HandshakeIdleTimeout,
 		MaxIdleTimeout:                 cfg.QUIC.MaxIdleTimeout,
 		MaxIncomingStreams:             cfg.QUIC.MaxIncomingStreams,
 		MaxIncomingUniStreams:          cfg.QUIC.MaxIncomingUniStreams,
@@ -103,8 +104,10 @@ func runServer(ctx context.Context, cfg *config.ServerConfig) (err error) {
 		InitialConnectionReceiveWindow: cfg.QUIC.InitialConnectionReceiveWindow,
 		MaxConnectionReceiveWindow:     cfg.QUIC.MaxConnectionReceiveWindow,
 		KeepAlivePeriod:                cfg.QUIC.KeepAlivePeriod,
+		InitialPacketSize:              cfg.QUIC.InitialPacketSize,
 		DisablePathMTUDiscovery:        cfg.QUIC.DisablePathMTUDiscovery,
 		Enable0RTT:                     cfg.QUIC.Enable0RTT,
+		EnableDatagrams:                cfg.QUIC.EnableDatagrams,
 	}
 	quicConfig := quictransport.NewQUICConfig(&quicOpts)
 	server := quictransport.NewServer(listenAddr, tlsConfig, quicConfig)

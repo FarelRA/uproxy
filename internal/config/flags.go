@@ -19,6 +19,7 @@ func AddCommonFlags(cmd *cobra.Command, cfg *CommonConfig) {
 	cmd.Flags().IntVar(&cfg.TCPBufSize, "tcp-buf", DefaultTCPBufSize, "TCP buffer size")
 
 	// QUIC protocol flags
+	cmd.Flags().DurationVar(&cfg.QUIC.HandshakeIdleTimeout, "quic-handshake-timeout", DefaultQUICHandshakeIdleTimeout, "QUIC handshake idle timeout")
 	cmd.Flags().DurationVar(&cfg.QUIC.MaxIdleTimeout, "quic-max-idle-timeout", DefaultQUICMaxIdleTimeout, "QUIC maximum idle timeout")
 	cmd.Flags().Int64Var(&cfg.QUIC.MaxIncomingStreams, "quic-max-incoming-streams", DefaultQUICMaxIncomingStreams, "QUIC maximum incoming bidirectional streams")
 	cmd.Flags().Int64Var(&cfg.QUIC.MaxIncomingUniStreams, "quic-max-incoming-uni-streams", DefaultQUICMaxIncomingUniStreams, "QUIC maximum incoming unidirectional streams")
@@ -27,8 +28,15 @@ func AddCommonFlags(cmd *cobra.Command, cfg *CommonConfig) {
 	cmd.Flags().Uint64Var(&cfg.QUIC.InitialConnectionReceiveWindow, "quic-initial-conn-window", DefaultQUICInitialConnectionReceiveWindow, "QUIC initial connection receive window size (bytes)")
 	cmd.Flags().Uint64Var(&cfg.QUIC.MaxConnectionReceiveWindow, "quic-max-conn-window", DefaultQUICMaxConnectionReceiveWindow, "QUIC maximum connection receive window size (bytes)")
 	cmd.Flags().DurationVar(&cfg.QUIC.KeepAlivePeriod, "quic-keepalive", DefaultQUICKeepAlivePeriod, "QUIC keep-alive period")
+
+	// QUIC packet and feature flags
+	var initialPacketSize int
+	cmd.Flags().IntVar(&initialPacketSize, "quic-initial-packet-size", int(DefaultQUICInitialPacketSize), "QUIC initial packet size (1200-65527)")
+	cfg.QUIC.InitialPacketSize = uint16(initialPacketSize)
+
 	cmd.Flags().BoolVar(&cfg.QUIC.DisablePathMTUDiscovery, "quic-disable-pmtu", DefaultQUICDisablePathMTUDiscovery, "Disable QUIC path MTU discovery")
 	cmd.Flags().BoolVar(&cfg.QUIC.Enable0RTT, "quic-enable-0rtt", DefaultQUICEnable0RTT, "Enable QUIC 0-RTT (requires session resumption)")
+	cmd.Flags().BoolVar(&cfg.QUIC.EnableDatagrams, "quic-enable-datagrams", DefaultQUICEnableDatagrams, "Enable QUIC datagrams (RFC 9221) for UDP support")
 
 	// SSH flags
 	cmd.Flags().StringVar(&cfg.SSH.Dir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")

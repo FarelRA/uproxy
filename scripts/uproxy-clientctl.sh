@@ -20,6 +20,7 @@
 #   IDLE_TIMEOUT        - Idle timeout duration (default: 1h)
 #   SSH_TIMEOUT         - SSH handshake timeout (default: 10s)
 #   TCP_BUF             - TCP buffer size per stream (default: 32768)
+#   QUIC_HANDSHAKE_TIMEOUT - QUIC handshake idle timeout (default: 10s)
 #   QUIC_MAX_IDLE_TIMEOUT - QUIC maximum idle timeout (default: 1h)
 #   QUIC_MAX_INCOMING_STREAMS - QUIC max incoming bidirectional streams (default: 1000)
 #   QUIC_MAX_INCOMING_UNI_STREAMS - QUIC max incoming unidirectional streams (default: 1000)
@@ -28,8 +29,10 @@
 #   QUIC_INITIAL_CONN_WINDOW - QUIC initial connection receive window in bytes (default: 1048576)
 #   QUIC_MAX_CONN_WINDOW - QUIC max connection receive window in bytes (default: 15728640)
 #   QUIC_KEEPALIVE      - QUIC keep-alive period (default: 30s)
+#   QUIC_INITIAL_PACKET_SIZE - QUIC initial packet size (default: 1280)
 #   QUIC_DISABLE_PMTU   - Disable QUIC path MTU discovery (default: false)
 #   QUIC_ENABLE_0RTT    - Enable QUIC 0-RTT (default: false)
+#   QUIC_ENABLE_DATAGRAMS - Enable QUIC datagrams for UDP (default: true)
 #   EXTRA_FLAGS         - Additional flags to pass to uproxy-client
 #
 
