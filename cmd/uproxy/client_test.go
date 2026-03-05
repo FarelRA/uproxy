@@ -15,7 +15,7 @@ import (
 // TestConnectionManager_GetQUICClient tests thread-safe access to QUIC client
 func TestConnectionManager_GetQUICClient(t *testing.T) {
 	cfg := &config.ClientConfig{}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	// Test nil client
 	if client := cm.getQUICClient(); client != nil {
@@ -37,7 +37,7 @@ func TestConnectionManager_GetQUICClient(t *testing.T) {
 // TestConnectionManager_CloseConnection tests thread-safe connection closing
 func TestConnectionManager_CloseConnection(t *testing.T) {
 	cfg := &config.ClientConfig{}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	// Test closing nil connection (should not panic)
 	cm.closeConnection()
@@ -57,7 +57,7 @@ func TestConnectionManager_CloseConnection(t *testing.T) {
 // TestConnectionManager_ConcurrentAccess tests concurrent read/write operations
 func TestConnectionManager_ConcurrentAccess(t *testing.T) {
 	cfg := &config.ClientConfig{}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -158,7 +158,7 @@ func TestNewConnectionManager(t *testing.T) {
 	}
 
 	// Create a dummy signer (nil is acceptable for this test)
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	if cm == nil {
 		t.Fatal("Expected non-nil connectionManager")
@@ -176,7 +176,7 @@ func TestNewConnectionManager(t *testing.T) {
 // TestConnectionManager_WaitForDisconnection tests disconnection detection
 func TestConnectionManager_WaitForDisconnection(t *testing.T) {
 	cfg := &config.ClientConfig{}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -219,7 +219,7 @@ func (m *mockSSHClient) Close() error {
 // TestConnectionManager_StateTransitions tests connection state management
 func TestConnectionManager_StateTransitions(t *testing.T) {
 	cfg := &config.ClientConfig{}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	// Initial state: no connection
 	if cm.getQUICClient() != nil {
@@ -243,7 +243,7 @@ func TestConnectionManager_StateTransitions(t *testing.T) {
 // BenchmarkConnectionManager_GetQUICClient benchmarks thread-safe client access
 func BenchmarkConnectionManager_GetQUICClient(b *testing.B) {
 	cfg := &config.ClientConfig{}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -255,7 +255,7 @@ func BenchmarkConnectionManager_GetQUICClient(b *testing.B) {
 // BenchmarkConnectionManager_CloseConnection benchmarks thread-safe close
 func BenchmarkConnectionManager_CloseConnection(b *testing.B) {
 	cfg := &config.ClientConfig{}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -269,7 +269,7 @@ func TestConnectionManager_HandleConnectivityFailure(t *testing.T) {
 	cfg := &config.ClientConfig{
 		ServerAddr: "test:1234",
 	}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	// Basic smoke test for manager creation without panic.
 	if cm == nil {
@@ -287,7 +287,7 @@ func TestShouldFallbackToSOCKS5(t *testing.T) {
 }
 
 func TestWaitForQUICClientContextCancel(t *testing.T) {
-	cm := newConnectionManager(&config.ClientConfig{}, nil)
+	cm := newConnectionManager(&config.ClientConfig{}, nil, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
@@ -308,7 +308,7 @@ func TestStartSOCKS5ProxyBindFailure(t *testing.T) {
 	defer listener.Close()
 
 	cfg := &config.ClientConfig{ListenAddr: listener.Addr().String()}
-	cm := newConnectionManager(cfg, nil)
+	cm := newConnectionManager(cfg, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()

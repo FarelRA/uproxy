@@ -123,7 +123,7 @@ func TestLoadPrivateKey_SpecificPathNotFound(t *testing.T) {
 	if err == nil {
 		t.Error("expected error for nonexistent key, got nil")
 	}
-	if err != nil && err.Error() != "could not read private key from /nonexistent/key" {
+	if err != nil && !strings.Contains(err.Error(), "no valid private key found") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
@@ -154,7 +154,7 @@ func TestLoadPrivateKey_NoKeysFound(t *testing.T) {
 	if err == nil {
 		t.Error("expected error when no keys found, got nil")
 	}
-	if err != nil && err.Error() != "could not find id_ed25519 or id_rsa in SSH directory." {
+	if err != nil && !strings.Contains(err.Error(), "no valid private key found") {
 		t.Errorf("unexpected error message: %v", err)
 	}
 }
