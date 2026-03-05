@@ -176,13 +176,14 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 	}
 
 	// Create TLS config with client certificate and server verification
-	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{cm.tlsCert},
-		InsecureSkipVerify: true,
-		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+	tlsConfig, err := quictransport.NewClientTLSConfig(
+		cm.tlsCert,
+		func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			return uproxy.VerifyServerCertificate(rawCerts, cm.cfg.ServerAddr, cm.cfg.SSH.Dir, cm.cfg.SSH.KnownHosts)
 		},
-		NextProtos: []string{"uproxy-quic"},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create TLS config: %w", err)
 	}
 
 	// Create QUIC client with configuration from flags
