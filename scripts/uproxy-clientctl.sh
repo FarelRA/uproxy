@@ -156,16 +156,19 @@ build_args() {
     args+=(--tcp-buf "${TCP_BUF:-32768}")
     
     # QUIC protocol configuration
-    [[ -n "${QUIC_MAX_IDLE_TIMEOUT}" ]] && args+=(--quic-max-idle-timeout "${QUIC_MAX_IDLE_TIMEOUT}")
-    [[ -n "${QUIC_MAX_INCOMING_STREAMS}" ]] && args+=(--quic-max-incoming-streams "${QUIC_MAX_INCOMING_STREAMS}")
-    [[ -n "${QUIC_MAX_INCOMING_UNI_STREAMS}" ]] && args+=(--quic-max-incoming-uni-streams "${QUIC_MAX_INCOMING_UNI_STREAMS}")
-    [[ -n "${QUIC_INITIAL_STREAM_WINDOW}" ]] && args+=(--quic-initial-stream-window "${QUIC_INITIAL_STREAM_WINDOW}")
-    [[ -n "${QUIC_MAX_STREAM_WINDOW}" ]] && args+=(--quic-max-stream-window "${QUIC_MAX_STREAM_WINDOW}")
-    [[ -n "${QUIC_INITIAL_CONN_WINDOW}" ]] && args+=(--quic-initial-conn-window "${QUIC_INITIAL_CONN_WINDOW}")
-    [[ -n "${QUIC_MAX_CONN_WINDOW}" ]] && args+=(--quic-max-conn-window "${QUIC_MAX_CONN_WINDOW}")
-    [[ -n "${QUIC_KEEPALIVE}" ]] && args+=(--quic-keepalive "${QUIC_KEEPALIVE}")
-    [[ -n "${QUIC_DISABLE_PMTU}" ]] && args+=(--quic-disable-pmtu "${QUIC_DISABLE_PMTU}")
-    [[ -n "${QUIC_ENABLE_0RTT}" ]] && args+=(--quic-enable-0rtt "${QUIC_ENABLE_0RTT}")
+    [[ -n "${QUIC_HANDSHAKE_TIMEOUT:-}" ]] && args+=(--quic-handshake-timeout "${QUIC_HANDSHAKE_TIMEOUT}")
+    [[ -n "${QUIC_MAX_IDLE_TIMEOUT:-}" ]] && args+=(--quic-max-idle-timeout "${QUIC_MAX_IDLE_TIMEOUT}")
+    [[ -n "${QUIC_MAX_INCOMING_STREAMS:-}" ]] && args+=(--quic-max-incoming-streams "${QUIC_MAX_INCOMING_STREAMS}")
+    [[ -n "${QUIC_MAX_INCOMING_UNI_STREAMS:-}" ]] && args+=(--quic-max-incoming-uni-streams "${QUIC_MAX_INCOMING_UNI_STREAMS}")
+    [[ -n "${QUIC_INITIAL_STREAM_WINDOW:-}" ]] && args+=(--quic-initial-stream-window "${QUIC_INITIAL_STREAM_WINDOW}")
+    [[ -n "${QUIC_MAX_STREAM_WINDOW:-}" ]] && args+=(--quic-max-stream-window "${QUIC_MAX_STREAM_WINDOW}")
+    [[ -n "${QUIC_INITIAL_CONN_WINDOW:-}" ]] && args+=(--quic-initial-conn-window "${QUIC_INITIAL_CONN_WINDOW}")
+    [[ -n "${QUIC_MAX_CONN_WINDOW:-}" ]] && args+=(--quic-max-conn-window "${QUIC_MAX_CONN_WINDOW}")
+    [[ -n "${QUIC_KEEPALIVE:-}" ]] && args+=(--quic-keepalive "${QUIC_KEEPALIVE}")
+    [[ -n "${QUIC_INITIAL_PACKET_SIZE:-}" ]] && args+=(--quic-initial-packet-size "${QUIC_INITIAL_PACKET_SIZE}")
+    [[ -n "${QUIC_DISABLE_PMTU:-}" ]] && args+=(--quic-disable-pmtu "${QUIC_DISABLE_PMTU}")
+    [[ -n "${QUIC_ENABLE_0RTT:-}" ]] && args+=(--quic-enable-0rtt "${QUIC_ENABLE_0RTT}")
+    [[ -n "${QUIC_ENABLE_DATAGRAMS:-}" ]] && args+=(--quic-enable-datagrams "${QUIC_ENABLE_DATAGRAMS}")
     
     # Extra flags
     if [[ -n "${EXTRA_FLAGS:-}" ]]; then
