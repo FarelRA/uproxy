@@ -16,9 +16,7 @@ func AddCommonFlags(cmd *cobra.Command, cfg *CommonConfig) {
 
 	// Network flags
 	cmd.Flags().DurationVar(&cfg.IdleTimeout, "idle-timeout", DefaultIdleTimeout, "Idle timeout for connections")
-	cmd.Flags().DurationVar(&cfg.ReconnectInterval, "reconnect-interval", DefaultReconnectInterval, "Reconnect interval on failure")
 	cmd.Flags().IntVar(&cfg.TCPBufSize, "tcp-buf", DefaultTCPBufSize, "TCP buffer size")
-	cmd.Flags().IntVar(&cfg.UDPSockBuf, "udp-sockbuf", DefaultUDPSockBuf, "UDP socket buffer size")
 
 	// SSH flags
 	cmd.Flags().StringVar(&cfg.SSH.Dir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")

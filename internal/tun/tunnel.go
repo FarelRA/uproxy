@@ -17,8 +17,7 @@ import (
 )
 
 const (
-	ChannelTypeTUN = "tun-ip"
-	MaxPacketSize  = 2000 // Maximum IP packet size we'll handle
+	MaxPacketSize = 2000 // Maximum IP packet size we'll handle
 
 	// IP assignment protocol prefixes
 	IPAssignmentErrorPrefix = "ERROR:"

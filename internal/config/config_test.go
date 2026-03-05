@@ -20,14 +20,8 @@ func TestNewDefaultCommonConfig(t *testing.T) {
 	if cfg.IdleTimeout != DefaultIdleTimeout {
 		t.Errorf("Expected IdleTimeout %v, got %v", DefaultIdleTimeout, cfg.IdleTimeout)
 	}
-	if cfg.ReconnectInterval != DefaultReconnectInterval {
-		t.Errorf("Expected ReconnectInterval %v, got %v", DefaultReconnectInterval, cfg.ReconnectInterval)
-	}
 	if cfg.TCPBufSize != DefaultTCPBufSize {
 		t.Errorf("Expected TCPBufSize %d, got %d", DefaultTCPBufSize, cfg.TCPBufSize)
-	}
-	if cfg.UDPSockBuf != DefaultUDPSockBuf {
-		t.Errorf("Expected UDPSockBuf %d, got %d", DefaultUDPSockBuf, cfg.UDPSockBuf)
 	}
 }
 
@@ -108,8 +102,8 @@ func TestAddCommonFlags(t *testing.T) {
 	// Verify flags were added
 	flags := []string{
 		"log-level", "log-format",
-		"idle-timeout", "reconnect-interval",
-		"tcp-buf", "udp-sockbuf",
+		"idle-timeout",
+		"tcp-buf",
 		"ssh-dir", "ssh-private-key",
 	}
 
@@ -326,12 +320,10 @@ func TestSetupSSHPaths(t *testing.T) {
 func TestConfigStructFields(t *testing.T) {
 	// Test that all config structs can be instantiated
 	_ = CommonConfig{
-		LogLevel:          "debug",
-		LogFormat:         "json",
-		IdleTimeout:       30 * time.Second,
-		ReconnectInterval: 5 * time.Second,
-		TCPBufSize:        65536,
-		UDPSockBuf:        8388608,
+		LogLevel:    "debug",
+		LogFormat:   "json",
+		IdleTimeout: 30 * time.Second,
+		TCPBufSize:  65536,
 		SSH: SSHConfig{
 			Dir:            "/test/.ssh",
 			PrivateKey:     "/test/.ssh/id_rsa",

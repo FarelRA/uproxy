@@ -20,7 +20,6 @@ const (
 const (
 	DefaultBufferSize = 2048
 	DefaultTCPBufSize = 32768
-	DefaultUDPSockBuf = 4194304
 	MaxUDPPacketSize  = 65507
 )
 
@@ -29,7 +28,6 @@ const (
 	DefaultRetryDelay          = 100 * time.Millisecond
 	MaxRetryAttempts           = 150
 	DefaultReconnectRetryWait  = 5 * time.Second
-	DefaultReconnectInterval   = 5 * time.Second
 	DefaultIdleTimeout         = 0 * time.Second
 	DefaultSSHTimeout          = 30 * time.Second
 	DefaultProxyDialTimeout    = 10 * time.Second

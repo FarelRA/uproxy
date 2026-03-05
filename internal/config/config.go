@@ -15,11 +15,9 @@ type CommonConfig struct {
 	LogLevel  string
 	LogFormat string
 
-	IdleTimeout       time.Duration
-	ReconnectInterval time.Duration
+	IdleTimeout time.Duration
 
 	TCPBufSize int
-	UDPSockBuf int
 
 	SSH SSHConfig
 }
@@ -79,13 +77,11 @@ type TUNClientConfig struct {
 // NewDefaultCommonConfig returns a CommonConfig with default values
 func NewDefaultCommonConfig() CommonConfig {
 	return CommonConfig{
-		LogLevel:          DefaultLogLevel,
-		LogFormat:         DefaultLogFormat,
-		IdleTimeout:       DefaultIdleTimeout,
-		ReconnectInterval: DefaultReconnectInterval,
-		TCPBufSize:        DefaultTCPBufSize,
-		UDPSockBuf:        DefaultUDPSockBuf,
-		SSH:               SSHConfig{},
+		LogLevel:    DefaultLogLevel,
+		LogFormat:   DefaultLogFormat,
+		IdleTimeout: DefaultIdleTimeout,
+		TCPBufSize:  DefaultTCPBufSize,
+		SSH:         SSHConfig{},
 	}
 }
 
