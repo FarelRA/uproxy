@@ -298,26 +298,14 @@ func startSOCKS5Server(ctx context.Context, listenAddr string, tcpBufSize int, g
 			if client == nil {
 				return nil, fmt.Errorf("quic client not connected")
 			}
-			stream, err := client.OpenTCPStream(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("failed to open TCP stream: %w", err)
-			}
-			return stream, nil
+			return socks5.DialTCP(ctx, client, addr)
 		},
 		func(ctx context.Context) (net.Addr, io.Closer, error) {
 			client := getClient()
 			if client == nil {
 				return nil, nil, fmt.Errorf("quic client not connected")
 			}
-			stream, err := client.OpenUDPStream(ctx)
-			if err != nil {
-				return nil, nil, fmt.Errorf("failed to open UDP stream: %w", err)
-			}
-			localAddr := client.LocalAddr()
-			if localAddr == nil {
-				localAddr = &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
-			}
-			return localAddr, stream, nil
+			return socks5.DialUDP(ctx, client, "127.0.0.1")
 		})
 }
 
