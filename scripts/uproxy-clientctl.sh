@@ -374,7 +374,7 @@ health_check() {
         fi
         
         # Check for connection status
-        if tail -n 50 "$LOG_FILE" | grep -q "Connected to server via KCP+SSH"; then
+        if tail -n 50 "$LOG_FILE" | grep -q "Connected to server via QUIC+mTLS"; then
             log_success "Client is connected to server"
         else
             log_warn "No recent connection confirmation in logs"
@@ -434,16 +434,7 @@ Environment Variables:
     LOG_FORMAT          Log format: console|json (default: console)
     IDLE_TIMEOUT        Idle timeout duration (default: 1h)
     SSH_TIMEOUT         SSH handshake timeout (default: 10s)
-    RECONNECT_INTERVAL  Reconnect interval on network drop (default: 1s)
     TCP_BUF             TCP buffer size per stream (default: 32768)
-    UDP_SOCKBUF         UDP socket buffer size (default: 4194304)
-    KCP_NODELAY         KCP nodelay mode (default: 1)
-    KCP_INTERVAL        KCP timer interval in ms (default: 10)
-    KCP_RESEND          KCP fast resend mode (default: 2)
-    KCP_NC              KCP disable congestion control (default: 1)
-    KCP_SNDWND          KCP send window (default: 1024)
-    KCP_RCVWND          KCP receive window (default: 1024)
-    KCP_MTU             KCP MTU (default: 1350)
     EXTRA_FLAGS         Additional flags to pass to uproxy-client
 
 Examples:
@@ -458,9 +449,6 @@ Examples:
     
     # Start with custom listen address and debug logging
     SERVER=203.0.113.50:6000 LISTEN=127.0.0.1:8080 LOG_LEVEL=debug $0 start
-    
-    # Start with custom KCP parameters
-    SERVER=203.0.113.50:6000 KCP_MTU=1400 KCP_SNDWND=8192 $0 start
 
 EOF
 }

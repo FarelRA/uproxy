@@ -13,8 +13,8 @@ var version = "dev"
 func main() {
 	var rootCmd = &cobra.Command{
 		Use:   "uproxy",
-		Short: "Highly resilient KCP+SSH proxy (client and server)",
-		Long: `uproxy is a highly resilient VPN system using KCP+SSH with intelligent 
+		Short: "Highly resilient QUIC+mTLS proxy (client and server)",
+		Long: `uproxy is a highly resilient VPN system using QUIC+mTLS with intelligent 
 connectivity monitoring and fast recovery from network issues.`,
 		Version: version,
 	}

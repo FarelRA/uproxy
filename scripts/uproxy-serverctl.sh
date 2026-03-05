@@ -417,16 +417,7 @@ Environment Variables:
     SSH_AUTHORIZED_KEYS SSH authorized_keys file (default: ~/.ssh/authorized_keys)
     IDLE_TIMEOUT        Idle timeout duration (default: 1h)
     PROXY_DIAL_TIMEOUT  Timeout for dialing upstream SOCKS5 targets (default: 5s)
-    RECONNECT_INTERVAL  Interval to retry binding UDP socket on network drop (default: 1s)
     TCP_BUF             TCP buffer size per stream (default: 32768)
-    UDP_SOCKBUF         UDP socket buffer size (default: 4194304)
-    KCP_NODELAY         KCP nodelay mode (default: 1)
-    KCP_INTERVAL        KCP timer interval in ms (default: 10)
-    KCP_RESEND          KCP fast resend mode (default: 2)
-    KCP_NC              KCP disable congestion control (default: 1)
-    KCP_SNDWND          KCP send window (default: 1024)
-    KCP_RCVWND          KCP receive window (default: 1024)
-    KCP_MTU             KCP MTU (default: 1350)
     TUN_NAME            TUN device name (default: tun0)
     TUN_IP              TUN interface IPv4 address (default: 10.0.0.1)
     TUN_NETMASK         TUN interface netmask (default: 255.255.255.0)
@@ -450,9 +441,6 @@ Examples:
     
     # Start with custom SSH configuration
     SSH_DIR=/etc/uproxy/ssh $0 start
-    
-    # Start with custom KCP parameters
-    KCP_MTU=1400 KCP_SNDWND=8192 $0 start
     
     # Start with custom TUN configuration
     sudo TUN_IP=192.168.100.1 TUN_IPV6=fd00:1234::1/64 TUN_AUTO_ROUTE=true $0 start

@@ -189,7 +189,7 @@ func CreateDialer(network, outbound string, dialTimeout time.Duration) (*net.Dia
 }
 
 // OptimizeUDPConn forces the OS-level UDP socket to allocate massive Read/Write
-// buffers to safely accommodate high-throughput, high-BDP KCP window sizes
+// buffers to safely accommodate high-throughput, high-BDP QUIC window sizes
 // without kernel-level packet drops.
 func OptimizeUDPConn(conn *net.UDPConn, bufSize int) {
 	if bufSize > 0 {

@@ -16,16 +16,16 @@ It is designed for one specific purpose: **to keep your connections alive no mat
 ┌──────▼───────────────────────────┐
 │ uproxy-client                    │
 │  1. SOCKS5 or TUN: App Layer     │
-│  2. SSH: ChaCha20 Encryption     │
-│  3. KCP: Reliable UDP Transport  │
-│  4. ResilientPacketConn (Socket) │
+│  2. QUIC: Multiplexed Streams    │
+│  3. mTLS: Mutual Authentication  │
+│  4. UDP Socket                   │
 └──────┬───────────────────────────┘
-       │ (Encrypted KCP over UDP)   <-- The Uninterruptible Link
+       │ (QUIC+mTLS over UDP)       <-- The Uninterruptible Link
 ┌──────▼───────────────────────────┐
 │ uproxy-server                    │
-│  4. ResilientPacketConn (Socket) │
-│  3. KCP: Reliable UDP Transport  │
-│  2. SSH: Auth & Multiplexer      │
+│  4. UDP Socket                   │
+│  3. mTLS: Mutual Authentication  │
+│  2. QUIC: Stream Demultiplexer   │
 │  1. SOCKS5 or TUN: Packet Router │
 └──────┬───────────────────────────┘
        │ (Raw TCP & UDP)
@@ -36,19 +36,18 @@ It is designed for one specific purpose: **to keep your connections alive no mat
 
 ## ✨ Core Features
 
-### 🛡️ The "Uninterruptible" Socket (`ResilientPacketConn`)
-Standard TCP/UDP proxies instantly crash when your OS network interface changes (yielding an `ENETUNREACH` kernel error). 
-`uproxy` intercepts these fatal hardware drops, silently swallows them, artificially freezes the transport layer to prevent timeout panics, and frantically rebinds to your new network interface in the background. Your connections survive IP changes, Wi-Fi toggles, and cellular handoffs.
+### 🚀 QUIC Transport with Connection Migration
+`uproxy` uses QUIC (Quick UDP Internet Connections) as its transport protocol, providing native connection migration and multiplexing.
+- **Seamless Network Changes:** QUIC's built-in connection migration allows your connections to survive IP address changes, Wi-Fi to cellular handoffs, and network interface switches without dropping.
+- **1-Hour Flights:** Configurable idle timeout (default 1 hour) allows you to be entirely offline without the connection dying. QUIC's keep-alive mechanism maintains the connection state.
+- **Multiplexed Streams:** Multiple streams share a single QUIC connection, eliminating head-of-line blocking and reducing latency.
+- **0-RTT Resumption:** Subsequent connections can resume with zero round-trip time, dramatically reducing reconnection overhead.
 
-### 🚀 Vendored & Purified KCP Transport
-Instead of TCP, `uproxy` routes traffic over a heavily modified, vendored version of `kcp-go`. 
-- **1-Hour Flights:** Hardcoded KCP death-timers were rewritten. The client and server actively synchronize heartbeats to allow a configurable `--idle-timeout` (default 1 hour) where you can be entirely offline without the connection dying.
-- **Lossy Mobile Ready:** Congestion control is disabled by default. If a cellular tower drops a packet, `uproxy` blasts right through it instead of throttling your bandwidth.
-
-### 🔑 Native SSH Cryptography (No Passwords, No X.509)
-`uproxy` runs a mathematically pure OpenSSH tunnel directly over the KCP transport.
-- **Client Auth:** No passwords. It loads your local `~/.ssh/id_ed25519` and verifies it against the server's standard `~/.ssh/authorized_keys`.
-- **Server Auth (TOFU):** Protects against MITM attacks. The client checks the server's fingerprint against your `~/.ssh/known_hosts`, throwing the classic OpenSSH terminal prompt if the server is unknown.
+### 🔑 SSH-based mTLS Authentication (No Passwords)
+`uproxy` uses mutual TLS (mTLS) for authentication and encryption, while maintaining OpenSSH's familiar key management workflow.
+- **Client Auth:** No passwords. It loads your local `~/.ssh/id_ed25519` or `~/.ssh/id_rsa`, converts it to an X.509 certificate on-the-fly, and verifies it against the server's standard `~/.ssh/authorized_keys`.
+- **Server Auth (TOFU):** Protects against MITM attacks. The client checks the server's certificate fingerprint against your `~/.ssh/known_hosts`, throwing the classic OpenSSH terminal prompt if the server is unknown.
+- **Best of Both Worlds:** You keep using your existing SSH keys and authorized_keys files, but benefit from QUIC's modern TLS 1.3 encryption and perfect forward secrecy.
 
 ### 🌐 Dual Mode: SOCKS5 & TUN
 **SOCKS5 Mode (Default):** Fully supports the SOCKS5 spec (`CONNECT` and `UDP ASSOCIATE`).
@@ -56,7 +55,7 @@ Instead of TCP, `uproxy` routes traffic over a heavily modified, vendored versio
 - **True UDP NAT:** UDP packets are cleanly framed, routed through the SSH tunnel, and dialed via dedicated sockets on the server side to prevent Head-of-Line blocking.
 
 **TUN Mode (VPN-like):** Creates a virtual network interface for system-wide tunneling.
-- **Layer 3 Tunneling:** All IP packets from the TUN device are encrypted and routed through the SSH/KCP transport.
+- **Layer 3 Tunneling:** All IP packets from the TUN device are encrypted and routed through the QUIC+mTLS transport.
 - **Transparent Routing:** Applications don't need SOCKS5 support—traffic is captured at the IP layer.
 - **Flexible Routing:** Configure specific routes (e.g., `0.0.0.0/0` for full VPN, or selective routes like `10.0.0.0/8`).
 
@@ -136,8 +135,8 @@ sudo ./bin/uproxy-client-amd64 \
 
 TUN mode uses a **symmetric architecture** where both client and server leverage the **system's native TCP/IP stack** for maximum efficiency and reliability:
 
-- **Client Side**: Applications → Kernel TCP/IP stack → Client TUN device → SSH/KCP tunnel
-- **Server Side**: SSH/KCP tunnel → Server TUN device → Kernel routing/NAT/forwarding → Internet (and back)
+- **Client Side**: Applications → Kernel TCP/IP stack → Client TUN device → QUIC+mTLS tunnel
+- **Server Side**: QUIC+mTLS tunnel → Server TUN device → Kernel routing/NAT/forwarding → Internet (and back)
 
 **Why this approach?**
 - **Symmetric design**: Both sides use TUN devices for clean bidirectional packet flow
@@ -186,7 +185,7 @@ sudo ./scripts/uproxy-clientctl.sh tail     # Follow logs in real-time
 - Binary paths and architecture (amd64/arm64)
 - Listen addresses and ports
 - Server endpoints
-- KCP parameters
+- QUIC parameters
 - Timeouts and buffer sizes
 
 ---
@@ -217,14 +216,20 @@ Buffer Tuning (High Speed):
   --tcp-buf             TCP copy buffer size per SOCKS5 stream (default 32768)
   --udp-sockbuf         OS UDP socket buffer size (default 4194304 - 4MB)
 
-KCP Protocol Tuning:
-  --kcp-nodelay         KCP nodelay mode (default 1 - enabled)
-  --kcp-interval        KCP internal timer interval in ms (default 10)
-  --kcp-resend          KCP fast resend mode (default 2)
-  --kcp-nc              KCP disable congestion control (default 1 - disabled for mobile)
-  --kcp-sndwnd          KCP send window size (default 4096)
-  --kcp-rcvwnd          KCP receive window size (default 4096)
-  --kcp-mtu             KCP maximum transmission unit (default 1350)
+QUIC Protocol Tuning:
+  --quic-max-idle-timeout                Maximum idle timeout (default 1h)
+  --quic-max-incoming-streams            Maximum concurrent bidirectional streams (default 1000)
+  --quic-max-incoming-uni-streams        Maximum concurrent unidirectional streams (default 1000)
+  --quic-initial-stream-receive-window   Initial stream receive window (default 512KB)
+  --quic-max-stream-receive-window       Maximum stream receive window (default 6MB)
+  --quic-initial-connection-receive-window Initial connection receive window (default 512KB)
+  --quic-max-connection-receive-window   Maximum connection receive window (default 15MB)
+  --quic-keep-alive-period               Keep-alive period (default 30s)
+  --quic-disable-path-mtu-discovery      Disable Path MTU Discovery (default false)
+  --quic-enable-0rtt                     Enable 0-RTT resumption (default true)
+  --quic-handshake-timeout               Handshake timeout (default 10s)
+  --quic-initial-packet-size             Initial packet size for MTU-constrained networks (default 1280)
+  --quic-enable-datagrams                Enable QUIC datagrams for UDP (default true)
 
 Logging & Telemetry:
   --log-level           Log level (debug, info, warn, error) (default "info")
@@ -251,9 +256,9 @@ Run with `--log-format json` to pipe telemetry into Datadog, ELK, or `jq`.
 The repository adheres to strict, idiomatic Go architectural symmetry:
 
 *   **`cmd/`**: The entrypoints. `uproxy-client` and `uproxy-server` handle CLI flags, bootstrap the environment, and wire the layers together.
-*   **`internal/kcp/`**: A pruned, vendored version of `xtaci/kcp-go`. Stripped of unused cryptography/FEC to provide a mathematically pure, unencrypted reliable UDP transport.
-*   **`internal/uproxy/`**: The core framework. Handles the `ResilientPacketConn` socket swallowing, native `crypto/ssh` handshaking, zero-copy `proxy.go` buffering, and system-level interface routing.
-*   **`internal/socks5/`**: A pristine, custom-built application layer. Symmetrically parses and routes SOCKS5 TCP (`tcp_tunnel.go`) and UDP (`udp_tunnel.go`) frames independently of the underlying transport.
+*   **`internal/quictransport/`**: QUIC transport implementation. Provides stream multiplexing, connection management, and typed stream helpers (TCP/UDP/TUN) over QUIC with mTLS authentication.
+*   **`internal/uproxy/`**: The core framework. Handles SSH key loading, X.509 certificate generation, mTLS verification callbacks, and authentication workflows (authorized_keys, known_hosts, TOFU).
+*   **`internal/socks5/`**: A pristine, custom-built application layer. Symmetrically parses and routes SOCKS5 TCP (`tcp_tunnel.go`) and UDP (`udp_tunnel.go`) frames over QUIC streams.
 *   **`internal/tun/`**: TUN device management and IP packet handling. Provides Layer 3 tunneling capabilities for VPN-like functionality.
 
 ---
