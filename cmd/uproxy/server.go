@@ -56,13 +56,13 @@ func runServer(ctx context.Context, cfg *config.ServerConfig) (err error) {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Load SSH private key and convert to TLS certificate
-	signer, err := uproxy.LoadPrivateKey(cfg.SSH.Dir, cfg.SSH.PrivateKey)
+	signer, keyBytes, err := uproxy.LoadPrivateKey(cfg.SSH.Dir, cfg.SSH.PrivateKey)
 	if err != nil {
 		return err
 	}
 
 	// Convert SSH key to TLS certificate (365 days validity, no hostnames for mTLS)
-	tlsCert, err := uproxy.SSHSignerToTLSCertificate(signer, 365*24*time.Hour, nil)
+	tlsCert, err := uproxy.SSHSignerToTLSCertificate(signer, keyBytes, 365*24*time.Hour, nil)
 	if err != nil {
 		return fmt.Errorf("failed to convert SSH key to TLS certificate: %w", err)
 	}

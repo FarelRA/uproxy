@@ -80,13 +80,13 @@ func runClient(ctx context.Context, cfg *config.ClientConfig) (err error) {
 	}()
 
 	// Load SSH private key
-	signer, err := uproxy.LoadPrivateKey(cfg.SSH.Dir, cfg.SSH.PrivateKey)
+	signer, keyBytes, err := uproxy.LoadPrivateKey(cfg.SSH.Dir, cfg.SSH.PrivateKey)
 	if err != nil {
 		return fmt.Errorf("failed to load SSH key: %w", err)
 	}
 
 	// Create connection manager
-	connMgr := newConnectionManager(cfg, signer)
+	connMgr := newConnectionManager(cfg, signer, keyBytes)
 	defer func() {
 		connMgr.cleanup()
 	}()
@@ -105,18 +105,20 @@ func validateMode(cfg *config.ClientConfig) error {
 
 // connectionManager manages the QUIC connection lifecycle
 type connectionManager struct {
-	cfg     *config.ClientConfig
-	signer  ssh.Signer
-	tlsCert tls.Certificate
+	cfg      *config.ClientConfig
+	signer   ssh.Signer
+	keyBytes []byte
+	tlsCert  tls.Certificate
 
 	mu         sync.RWMutex
 	quicClient *quictransport.Client
 }
 
-func newConnectionManager(cfg *config.ClientConfig, signer ssh.Signer) *connectionManager {
+func newConnectionManager(cfg *config.ClientConfig, signer ssh.Signer, keyBytes []byte) *connectionManager {
 	return &connectionManager{
-		cfg:    cfg,
-		signer: signer,
+		cfg:      cfg,
+		signer:   signer,
+		keyBytes: keyBytes,
 	}
 }
 
@@ -165,7 +167,7 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 
 	// Generate TLS certificate from SSH key if not already cached
 	if cm.tlsCert.Certificate == nil {
-		cert, err := uproxy.SSHSignerToTLSCertificate(cm.signer, 365*24*time.Hour, nil)
+		cert, err := uproxy.SSHSignerToTLSCertificate(cm.signer, cm.keyBytes, 365*24*time.Hour, nil)
 		if err != nil {
 			return fmt.Errorf("failed to generate TLS certificate from SSH key: %w", err)
 		}

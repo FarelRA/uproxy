@@ -92,7 +92,7 @@ func TestLoadPrivateKey_SpecificPath(t *testing.T) {
 		t.Fatalf("failed to write key: %v", err)
 	}
 
-	signer, err := LoadPrivateKey("", keyPath)
+	signer, _, err := LoadPrivateKey("", keyPath)
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -112,14 +112,14 @@ func TestLoadPrivateKey_SpecificPathInvalidFormat(t *testing.T) {
 		t.Fatalf("failed to write key: %v", err)
 	}
 
-	_, err := LoadPrivateKey("", keyPath)
+	_, _, err := LoadPrivateKey("", keyPath)
 	if err == nil {
 		t.Error("expected error parsing invalid key format, got nil")
 	}
 }
 
 func TestLoadPrivateKey_SpecificPathNotFound(t *testing.T) {
-	_, err := LoadPrivateKey("", "/nonexistent/key")
+	_, _, err := LoadPrivateKey("", "/nonexistent/key")
 	if err == nil {
 		t.Error("expected error for nonexistent key, got nil")
 	}
@@ -138,7 +138,7 @@ func TestLoadPrivateKey_SSHDir(t *testing.T) {
 		t.Fatalf("failed to write key: %v", err)
 	}
 
-	signer, err := LoadPrivateKey(tmpDir, "")
+	signer, _, err := LoadPrivateKey(tmpDir, "")
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestLoadPrivateKey_SSHDir(t *testing.T) {
 func TestLoadPrivateKey_NoKeysFound(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	_, err := LoadPrivateKey(tmpDir, "")
+	_, _, err := LoadPrivateKey(tmpDir, "")
 	if err == nil {
 		t.Error("expected error when no keys found, got nil")
 	}
@@ -169,7 +169,7 @@ func TestLoadPrivateKey_RSAFallback(t *testing.T) {
 		t.Fatalf("failed to write key: %v", err)
 	}
 
-	signer, err := LoadPrivateKey(tmpDir, "")
+	signer, _, err := LoadPrivateKey(tmpDir, "")
 	if err != nil {
 		t.Errorf("expected no error, got: %v", err)
 	}
@@ -542,7 +542,7 @@ func TestLoadPrivateKey_HomeDirError(t *testing.T) {
 	}
 	defer func() { homeDirFunc = oldHomeDir }()
 
-	_, err := LoadPrivateKey("", "")
+	_, _, err := LoadPrivateKey("", "")
 	if err == nil {
 		t.Error("expected error when homeDirFunc fails, got nil")
 	}
