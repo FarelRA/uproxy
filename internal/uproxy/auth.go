@@ -381,13 +381,8 @@ func VerifyServerCertificate(rawCerts [][]byte, serverAddr string, sshDir, known
 
 	slog.Debug("Verifying server certificate", "address", serverAddr, "key_type", sshPubKey.Type(), "fingerprint", ssh.FingerprintSHA256(sshPubKey))
 
-	host, _, err := net.SplitHostPort(serverAddr)
-	if err != nil {
-		host = serverAddr
-	}
-
 	dummyRemoteAddr := &net.TCPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0}
-	if err := VerifyKnownHost(host, dummyRemoteAddr, sshPubKey, sshDir, knownHostsPath); err != nil {
+	if err := VerifyKnownHost(serverAddr, dummyRemoteAddr, sshPubKey, sshDir, knownHostsPath); err != nil {
 		return fmt.Errorf("server authentication failed: %w", err)
 	}
 
