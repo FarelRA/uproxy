@@ -59,19 +59,6 @@ const (
 	DefaultLogFormat = "text"
 )
 
-// KCP Protocol Constants
-const (
-	DefaultKCPNoDelay   = 1
-	DefaultKCPInterval  = 10
-	DefaultKCPResend    = 2
-	DefaultKCPNC        = 1
-	DefaultKCPSndWnd    = 1024
-	DefaultKCPRcvWnd    = 1024
-	DefaultKCPMTU       = 1350
-	DefaultKCPDeadLink  = 0 // 0 means disabled
-	DefaultKCPStreamBuf = 4194304
-)
-
 // TUN Device Constants
 const (
 	DefaultTUNMTU           = 1500

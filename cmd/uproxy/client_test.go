@@ -12,13 +12,13 @@ import (
 	"uproxy/internal/tun"
 )
 
-// TestConnectionManager_GetSSHClient tests thread-safe access to SSH client
-func TestConnectionManager_GetSSHClient(t *testing.T) {
+// TestConnectionManager_GetQUICClient tests thread-safe access to QUIC client
+func TestConnectionManager_GetQUICClient(t *testing.T) {
 	cfg := &config.ClientConfig{}
 	cm := newConnectionManager(cfg, nil)
 
 	// Test nil client
-	if client := cm.getSSHClient(); client != nil {
+	if client := cm.getQUICClient(); client != nil {
 		t.Error("Expected nil client initially")
 	}
 
@@ -28,7 +28,7 @@ func TestConnectionManager_GetSSHClient(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_ = cm.getSSHClient()
+			_ = cm.getQUICClient()
 		}()
 	}
 	wg.Wait()
@@ -74,7 +74,7 @@ func TestConnectionManager_ConcurrentAccess(t *testing.T) {
 				case <-ctx.Done():
 					return
 				default:
-					_ = cm.getSSHClient()
+					_ = cm.getQUICClient()
 					time.Sleep(1 * time.Millisecond)
 				}
 			}
@@ -168,8 +168,8 @@ func TestNewConnectionManager(t *testing.T) {
 		t.Error("Config not properly set")
 	}
 
-	if cm.getSSHClient() != nil {
-		t.Error("Expected nil SSH client initially")
+	if cm.getQUICClient() != nil {
+		t.Error("Expected nil QUIC client initially")
 	}
 }
 
@@ -222,32 +222,32 @@ func TestConnectionManager_StateTransitions(t *testing.T) {
 	cm := newConnectionManager(cfg, nil)
 
 	// Initial state: no connection
-	if cm.getSSHClient() != nil {
+	if cm.getQUICClient() != nil {
 		t.Error("Expected nil client in initial state")
 	}
 
 	// After close: still no connection
 	cm.closeConnection()
-	if cm.getSSHClient() != nil {
+	if cm.getQUICClient() != nil {
 		t.Error("Expected nil client after closing nil connection")
 	}
 
 	// Multiple closes should be safe
 	cm.closeConnection()
 	cm.closeConnection()
-	if cm.getSSHClient() != nil {
+	if cm.getQUICClient() != nil {
 		t.Error("Expected nil client after multiple closes")
 	}
 }
 
-// BenchmarkConnectionManager_GetSSHClient benchmarks thread-safe client access
-func BenchmarkConnectionManager_GetSSHClient(b *testing.B) {
+// BenchmarkConnectionManager_GetQUICClient benchmarks thread-safe client access
+func BenchmarkConnectionManager_GetQUICClient(b *testing.B) {
 	cfg := &config.ClientConfig{}
 	cm := newConnectionManager(cfg, nil)
 
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = cm.getSSHClient()
+			_ = cm.getQUICClient()
 		}
 	})
 }
@@ -286,12 +286,12 @@ func TestShouldFallbackToSOCKS5(t *testing.T) {
 	}
 }
 
-func TestWaitForSSHClientContextCancel(t *testing.T) {
+func TestWaitForQUICClientContextCancel(t *testing.T) {
 	cm := newConnectionManager(&config.ClientConfig{}, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	client, err := waitForSSHClient(ctx, cm)
+	client, err := waitForQUICClient(ctx, cm)
 	if err == nil {
 		t.Fatal("expected context cancellation error")
 	}

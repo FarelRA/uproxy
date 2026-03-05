@@ -1,12 +1,20 @@
 package uproxy
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"log/slog"
 
@@ -226,5 +234,224 @@ func promptAndAddKnownHost(normalizedHost string, pubKey ssh.PublicKey, knownHos
 	}
 
 	fmt.Fprintf(os.Stderr, "Warning: Permanently added '%s' (%s) to the list of known hosts.\n", normalizedHost, pubKey.Type())
+	return nil
+}
+
+// SSHSignerToTLSCertificate generates a self-signed X.509 certificate from an SSH signer.
+// The certificate is valid for the specified duration and can include optional hostnames.
+// This allows SSH keys to be used for TLS/QUIC authentication.
+func SSHSignerToTLSCertificate(signer ssh.Signer, validFor time.Duration, hostnames []string) (tls.Certificate, error) {
+	sshPubKey := signer.PublicKey()
+	keyType := sshPubKey.Type()
+
+	var privKey interface{}
+	var pubKey interface{}
+
+	switch keyType {
+	case "ssh-ed25519":
+		cryptoPub, ok := sshPubKey.(ssh.CryptoPublicKey)
+		if !ok {
+			return tls.Certificate{}, fmt.Errorf("failed to get crypto public key from SSH Ed25519 key")
+		}
+		ed25519Pub, ok := cryptoPub.CryptoPublicKey().(ed25519.PublicKey)
+		if !ok {
+			return tls.Certificate{}, fmt.Errorf("SSH key is not Ed25519")
+		}
+
+		cryptoSigner, ok := signer.(ssh.AlgorithmSigner)
+		if !ok {
+			return tls.Certificate{}, fmt.Errorf("SSH signer does not implement AlgorithmSigner")
+		}
+
+		ed25519Priv, err := extractEd25519PrivateKey(cryptoSigner)
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("failed to extract Ed25519 private key: %w", err)
+		}
+
+		privKey = ed25519Priv
+		pubKey = ed25519Pub
+
+	case "ssh-rsa":
+		cryptoPub, ok := sshPubKey.(ssh.CryptoPublicKey)
+		if !ok {
+			return tls.Certificate{}, fmt.Errorf("failed to get crypto public key from SSH RSA key")
+		}
+		rsaPub, ok := cryptoPub.CryptoPublicKey().(*rsa.PublicKey)
+		if !ok {
+			return tls.Certificate{}, fmt.Errorf("SSH key is not RSA")
+		}
+
+		cryptoSigner, ok := signer.(ssh.AlgorithmSigner)
+		if !ok {
+			return tls.Certificate{}, fmt.Errorf("SSH signer does not implement AlgorithmSigner")
+		}
+
+		rsaPriv, err := extractRSAPrivateKey(cryptoSigner)
+		if err != nil {
+			return tls.Certificate{}, fmt.Errorf("failed to extract RSA private key: %w", err)
+		}
+
+		privKey = rsaPriv
+		pubKey = rsaPub
+
+	default:
+		return tls.Certificate{}, fmt.Errorf("unsupported SSH key type: %s (only ssh-ed25519 and ssh-rsa are supported)", keyType)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	notBefore := time.Now()
+	notAfter := notBefore.Add(validFor)
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			CommonName: "uproxy",
+		},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  false,
+		DNSNames:              hostnames,
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, pubKey, privKey)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	return tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  privKey,
+	}, nil
+}
+
+// extractEd25519PrivateKey extracts the Ed25519 private key from an SSH signer.
+func extractEd25519PrivateKey(signer ssh.AlgorithmSigner) (ed25519.PrivateKey, error) {
+	cryptoSigner, ok := signer.(interface{ CryptoPrivateKey() interface{} })
+	if !ok {
+		return nil, fmt.Errorf("signer does not expose CryptoPrivateKey method")
+	}
+
+	priv := cryptoSigner.CryptoPrivateKey()
+	ed25519Priv, ok := priv.(ed25519.PrivateKey)
+	if !ok {
+		ed25519PrivPtr, ok := priv.(*ed25519.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("private key is not Ed25519")
+		}
+		ed25519Priv = *ed25519PrivPtr
+	}
+
+	return ed25519Priv, nil
+}
+
+// extractRSAPrivateKey extracts the RSA private key from an SSH signer.
+func extractRSAPrivateKey(signer ssh.AlgorithmSigner) (*rsa.PrivateKey, error) {
+	cryptoSigner, ok := signer.(interface{ CryptoPrivateKey() interface{} })
+	if !ok {
+		return nil, fmt.Errorf("signer does not expose CryptoPrivateKey method")
+	}
+
+	priv := cryptoSigner.CryptoPrivateKey()
+	rsaPriv, ok := priv.(*rsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("private key is not RSA")
+	}
+
+	return rsaPriv, nil
+}
+
+// ExtractSSHPublicKeyFromCert extracts the SSH public key from an X.509 certificate.
+// This allows comparing the certificate's public key against authorized_keys or known_hosts.
+func ExtractSSHPublicKeyFromCert(cert *x509.Certificate) (ssh.PublicKey, error) {
+	if cert == nil {
+		return nil, fmt.Errorf("certificate is nil")
+	}
+
+	if cert.PublicKey == nil {
+		return nil, fmt.Errorf("certificate has no public key")
+	}
+
+	sshPubKey, err := ssh.NewPublicKey(cert.PublicKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert certificate public key to SSH format: %w", err)
+	}
+
+	return sshPubKey, nil
+}
+
+// ParseRawCertificate parses a raw certificate byte slice into an x509.Certificate.
+func ParseRawCertificate(rawCert []byte) (*x509.Certificate, error) {
+	cert, err := x509.ParseCertificate(rawCert)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse certificate: %w", err)
+	}
+	return cert, nil
+}
+
+// VerifyClientCertificate is a TLS verification callback for the server to verify client certificates.
+// It extracts the SSH public key from the client's certificate and checks it against authorized_keys.
+func VerifyClientCertificate(rawCerts [][]byte, sshDir, authorizedKeysPath string) error {
+	if len(rawCerts) == 0 {
+		return fmt.Errorf("no client certificate provided")
+	}
+
+	cert, err := ParseRawCertificate(rawCerts[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse client certificate: %w", err)
+	}
+
+	sshPubKey, err := ExtractSSHPublicKeyFromCert(cert)
+	if err != nil {
+		return fmt.Errorf("failed to extract SSH public key from client certificate: %w", err)
+	}
+
+	slog.Debug("Verifying client certificate", "key_type", sshPubKey.Type(), "fingerprint", ssh.FingerprintSHA256(sshPubKey))
+
+	if err := CheckAuthorizedKeys(sshPubKey, sshDir, authorizedKeysPath); err != nil {
+		return fmt.Errorf("client authentication failed: %w", err)
+	}
+
+	slog.Debug("Client certificate verified successfully", "key_type", sshPubKey.Type())
+	return nil
+}
+
+// VerifyServerCertificate is a TLS verification callback for the client to verify server certificates.
+// It extracts the SSH public key from the server's certificate and checks it against known_hosts.
+// Implements TOFU (Trust On First Use) for unknown servers.
+func VerifyServerCertificate(rawCerts [][]byte, serverAddr string, sshDir, knownHostsPath string) error {
+	if len(rawCerts) == 0 {
+		return fmt.Errorf("no server certificate provided")
+	}
+
+	cert, err := ParseRawCertificate(rawCerts[0])
+	if err != nil {
+		return fmt.Errorf("failed to parse server certificate: %w", err)
+	}
+
+	sshPubKey, err := ExtractSSHPublicKeyFromCert(cert)
+	if err != nil {
+		return fmt.Errorf("failed to extract SSH public key from server certificate: %w", err)
+	}
+
+	slog.Debug("Verifying server certificate", "address", serverAddr, "key_type", sshPubKey.Type(), "fingerprint", ssh.FingerprintSHA256(sshPubKey))
+
+	host, _, err := net.SplitHostPort(serverAddr)
+	if err != nil {
+		host = serverAddr
+	}
+
+	dummyRemoteAddr := &net.TCPAddr{IP: net.ParseIP("0.0.0.0"), Port: 0}
+	if err := VerifyKnownHost(host, dummyRemoteAddr, sshPubKey, sshDir, knownHostsPath); err != nil {
+		return fmt.Errorf("server authentication failed: %w", err)
+	}
+
+	slog.Debug("Server certificate verified successfully", "address", serverAddr, "key_type", sshPubKey.Type())
 	return nil
 }

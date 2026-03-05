@@ -6,8 +6,6 @@ import (
 	"net"
 	"sync"
 
-	"golang.org/x/crypto/ssh"
-
 	"uproxy/internal/framing"
 )
 
@@ -38,7 +36,7 @@ func (cr *ClientRegistry) ReleaseIP(ipv4, ipv6 string) {
 
 // AllocateAndNotifyClient allocates IPs, notifies the client, and registers them.
 // This is a convenience method that combines AllocateIP, notification, and RegisterClient.
-func (cr *ClientRegistry) AllocateAndNotifyClient(channel ssh.Channel) (*ClientRoute, string, string, error) {
+func (cr *ClientRegistry) AllocateAndNotifyClient(conn net.Conn) (*ClientRoute, string, string, error) {
 	// Allocate IPs for this client
 	clientIPv4, clientIPv6, err := cr.AllocateIP()
 	if err != nil {
@@ -52,27 +50,27 @@ func (cr *ClientRegistry) AllocateAndNotifyClient(channel ssh.Channel) (*ClientR
 	if clientIPv6 != "" {
 		ipMsg += fmt.Sprintf("%s%s\n", IPAssignmentIPv6Prefix, clientIPv6)
 	}
-	if err := framing.WriteFramed(channel, []byte(ipMsg)); err != nil {
+	if err := framing.WriteFramed(conn, []byte(ipMsg)); err != nil {
 		// Release the allocated IPs since we failed to notify
 		cr.ReleaseIP(clientIPv4, clientIPv6)
 		return nil, "", "", fmt.Errorf("failed to send IPs to client: %w", err)
 	}
 
 	// Register client with registry
-	route := cr.RegisterClient(clientIPv4, clientIPv6, channel)
+	route := cr.RegisterClient(clientIPv4, clientIPv6, conn)
 	return route, clientIPv4, clientIPv6, nil
 }
 
-// RegisterClient registers a client with its assigned IPs and channel.
-func (cr *ClientRegistry) RegisterClient(ipv4, ipv6 string, channel ssh.Channel) *ClientRoute {
+// RegisterClient registers a client with its assigned IPs and connection.
+func (cr *ClientRegistry) RegisterClient(ipv4, ipv6 string, conn net.Conn) *ClientRoute {
 	cr.Mu.Lock()
 	defer cr.Mu.Unlock()
 
 	route := &ClientRoute{
-		IPv4:    ipv4,
-		IPv6:    ipv6,
-		Channel: channel,
-		done:    make(chan struct{}),
+		IPv4: ipv4,
+		IPv6: ipv6,
+		Conn: conn,
+		done: make(chan struct{}),
 	}
 
 	cr.Clients[ipv4] = route

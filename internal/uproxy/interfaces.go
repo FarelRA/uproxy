@@ -18,6 +18,3 @@ type PacketConn interface {
 type DiagnosticsProvider interface {
 	DiagnoseFailure(ctx context.Context) network.DiagnosticResult
 }
-
-// Ensure ResilientPacketConn implements PacketConn
-var _ PacketConn = (*ResilientPacketConn)(nil)

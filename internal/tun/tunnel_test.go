@@ -10,7 +10,7 @@ import (
 )
 
 func TestReadServerAssignedIPsFramed(t *testing.T) {
-	ch := testutil.NewMockSSHChannel()
+	ch := testutil.NewMockConn()
 	if err := framing.WriteFramed(ch.ReadBuf, []byte("IPv4:10.0.0.2\nIPv6:fd00::2/64\n")); err != nil {
 		t.Fatalf("failed to write framed test payload: %v", err)
 	}
@@ -28,7 +28,7 @@ func TestReadServerAssignedIPsFramed(t *testing.T) {
 }
 
 func TestReadServerAssignedIPsServerError(t *testing.T) {
-	ch := testutil.NewMockSSHChannel()
+	ch := testutil.NewMockConn()
 	if err := framing.WriteFramed(ch.ReadBuf, []byte("ERROR: allocation failed\n")); err != nil {
 		t.Fatalf("failed to write framed test payload: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestReadServerAssignedIPsServerError(t *testing.T) {
 }
 
 func TestReadServerAssignedIPsMissingIPv4(t *testing.T) {
-	ch := testutil.NewMockSSHChannel()
+	ch := testutil.NewMockConn()
 	if err := framing.WriteFramed(ch.ReadBuf, []byte("IPv6:fd00::2/64\n")); err != nil {
 		t.Fatalf("failed to write framed test payload: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestReadServerAssignedIPsMissingIPv4(t *testing.T) {
 }
 
 func TestReadServerAssignedIPsInvalidFrame(t *testing.T) {
-	ch := testutil.NewMockSSHChannel()
+	ch := testutil.NewMockConn()
 	ch.ReadBuf = bytes.NewBufferString("IPv4:10.0.0.2\n")
 
 	_, _, err := readServerAssignedIPs(ch)

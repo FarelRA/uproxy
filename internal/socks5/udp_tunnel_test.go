@@ -3,9 +3,9 @@ package socks5
 import (
 	"errors"
 	"io"
+	"net"
 	"testing"
 
-	"golang.org/x/crypto/ssh"
 	"uproxy/internal/config"
 	"uproxy/internal/testutil"
 )
@@ -38,21 +38,21 @@ func TestParseSOCKS5UDPHeaderTooShort(t *testing.T) {
 
 func TestUDPSessionManagerCloseAllSessions(t *testing.T) {
 	mgr := &udpSessionManager{
-		sessions: make(map[string]ssh.Channel),
+		sessions: make(map[string]net.Conn),
 	}
 
-	ch1 := testutil.NewMockSSHChannel()
-	ch2 := testutil.NewMockSSHChannel()
+	ch1 := testutil.NewMockConn()
+	ch2 := testutil.NewMockConn()
 	mgr.sessions["1.1.1.1:53"] = ch1
 	mgr.sessions["8.8.8.8:53"] = ch2
 
 	mgr.closeAllSessions()
 
 	if !ch1.Closed {
-		t.Fatal("expected first channel to be closed")
+		t.Fatal("expected first connection to be closed")
 	}
 	if !ch2.Closed {
-		t.Fatal("expected second channel to be closed")
+		t.Fatal("expected second connection to be closed")
 	}
 	if len(mgr.sessions) != 0 {
 		t.Fatalf("expected sessions map to be empty, got %d", len(mgr.sessions))

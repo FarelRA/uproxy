@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -17,8 +19,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"uproxy/internal/config"
-	"uproxy/internal/kcp"
-	"uproxy/internal/network"
+	"uproxy/internal/quictransport"
 	"uproxy/internal/socks5"
 	"uproxy/internal/tun"
 	"uproxy/internal/uproxy"
@@ -102,15 +103,14 @@ func validateMode(cfg *config.ClientConfig) error {
 	return validation.ValidateClientMode(cfg)
 }
 
-// connectionManager manages the SSH connection lifecycle
+// connectionManager manages the QUIC connection lifecycle
 type connectionManager struct {
-	cfg    *config.ClientConfig
-	signer ssh.Signer
+	cfg     *config.ClientConfig
+	signer  ssh.Signer
+	tlsCert tls.Certificate
 
 	mu         sync.RWMutex
-	sshClient  *ssh.Client
-	kcpConn    *kcp.UDPSession
-	packetConn *uproxy.ResilientPacketConn
+	quicClient *quictransport.Client
 }
 
 func newConnectionManager(cfg *config.ClientConfig, signer ssh.Signer) *connectionManager {
@@ -120,11 +120,11 @@ func newConnectionManager(cfg *config.ClientConfig, signer ssh.Signer) *connecti
 	}
 }
 
-// getSSHClient returns the current SSH client (thread-safe)
-func (cm *connectionManager) getSSHClient() *ssh.Client {
+// getQUICClient returns the current QUIC client (thread-safe)
+func (cm *connectionManager) getQUICClient() *quictransport.Client {
 	cm.mu.RLock()
 	defer cm.mu.RUnlock()
-	return cm.sshClient
+	return cm.quicClient
 }
 
 // connectLoop maintains connection with automatic reconnection
@@ -153,7 +153,7 @@ func (cm *connectionManager) connectLoop(ctx context.Context) {
 	}
 }
 
-// establishConnection creates a new connection to the server
+// establishConnection creates a new QUIC connection to the server
 func (cm *connectionManager) establishConnection(ctx context.Context) error {
 	cm.mu.Lock()
 	defer cm.mu.Unlock()
@@ -161,116 +161,75 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 	// Close any existing connections
 	cm.closeConnectionLocked()
 
-	slog.Info("Dialing server", "addr", cm.cfg.ServerAddr)
+	slog.Info("Connecting to server via QUIC", "addr", cm.cfg.ServerAddr)
 
-	// Create and setup packet connection
-	packetConn, err := cm.createPacketConn()
-	if err != nil {
-		return err
+	// Generate TLS certificate from SSH key if not already cached
+	if cm.tlsCert.Certificate == nil {
+		cert, err := uproxy.SSHSignerToTLSCertificate(cm.signer, 365*24*time.Hour, nil)
+		if err != nil {
+			return fmt.Errorf("failed to generate TLS certificate from SSH key: %w", err)
+		}
+		cm.tlsCert = cert
+		slog.Debug("Generated TLS certificate from SSH key", "key_type", cm.signer.PublicKey().Type())
 	}
 
-	// Setup KCP connection
-	kcpConn, err := cm.setupKCP(packetConn)
-	if err != nil {
-		packetConn.Close()
-		return err
-	}
-
-	// Establish SSH connection
-	if err := cm.establishSSH(kcpConn); err != nil {
-		kcpConn.Close()
-		packetConn.Close()
-		return err
-	}
-
-	return nil
-}
-
-// createPacketConn creates and configures the resilient packet connection
-func (cm *connectionManager) createPacketConn() (*uproxy.ResilientPacketConn, error) {
-	packetConn := uproxy.NewResilientPacketConn(
-		cm.cfg.BindAddr,
-		"",
-		cm.cfg.ReconnectInterval,
-		cm.cfg.UDPSockBuf,
-		false,
-	)
-	cm.packetConn = packetConn
-
-	// Setup connectivity failure handler
-	packetConn.SetFailureHandler(cm.cfg.ServerAddr, cm.handleConnectivityFailure)
-	packetConn.SetIdleTimeout(cm.cfg.IdleTimeout)
-
-	return packetConn, nil
-}
-
-// setupKCP creates and configures the KCP connection
-func (cm *connectionManager) setupKCP(packetConn *uproxy.ResilientPacketConn) (*kcp.UDPSession, error) {
-	kcpConn, err := kcp.NewConn(cm.cfg.ServerAddr, packetConn)
-	if err != nil {
-		return nil, fmt.Errorf("KCP dial failed: %w", err)
-	}
-	cm.kcpConn = kcpConn
-
-	// Configure KCP
-	kcpConn.SetStreamMode(true)
-	cm.cfg.KCP.ToKCPConfig().Apply(kcpConn)
-	kcpConn.SetDeadLink(config.DefaultKCPDeadLink) // Disabled - connectivity monitor handles timeouts
-
-	return kcpConn, nil
-}
-
-// establishSSH creates SSH client config and establishes SSH connection
-func (cm *connectionManager) establishSSH(kcpConn *kcp.UDPSession) error {
-	sshConfig := &ssh.ClientConfig{
-		User: config.DefaultSSHUser,
-		Auth: []ssh.AuthMethod{
-			ssh.PublicKeys(cm.signer),
+	// Create TLS config with client certificate and server verification
+	tlsConfig := &tls.Config{
+		Certificates:       []tls.Certificate{cm.tlsCert},
+		InsecureSkipVerify: true,
+		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			return uproxy.VerifyServerCertificate(rawCerts, cm.cfg.ServerAddr, cm.cfg.SSH.Dir, cm.cfg.SSH.KnownHosts)
 		},
-		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
-			return uproxy.VerifyKnownHost(hostname, remote, key, cm.cfg.SSH.Dir, cm.cfg.SSH.KnownHosts)
-		},
-		Timeout: cm.cfg.SSHTimeout,
+		NextProtos: []string{"uproxy-quic"},
 	}
 
-	slog.Info("Attempting SSH authentication",
+	// Create QUIC client
+	quicOpts := quictransport.QUICConfigOptions{
+		MaxIdleTimeout:  cm.cfg.IdleTimeout,
+		KeepAlivePeriod: 30 * time.Second,
+		EnableDatagrams: true,
+	}
+	quicConfig := quictransport.NewQUICConfig(&quicOpts)
+
+	// Resolve server address
+	serverAddr, err := net.ResolveUDPAddr("udp", cm.cfg.ServerAddr)
+	if err != nil {
+		return fmt.Errorf("failed to resolve server address: %w", err)
+	}
+
+	client := quictransport.NewClient(serverAddr, tlsConfig, quicConfig)
+	cm.quicClient = client
+
+	// Connect to server
+	slog.Info("Attempting QUIC connection",
 		"server", cm.cfg.ServerAddr,
-		"user", config.DefaultSSHUser,
 		"key_type", cm.signer.PublicKey().Type(),
 		"fingerprint", ssh.FingerprintSHA256(cm.signer.PublicKey()))
 
-	sshClientConn, sshChans, sshReqs, err := ssh.NewClientConn(kcpConn, cm.cfg.ServerAddr, sshConfig)
-	if err != nil {
-		return fmt.Errorf("SSH handshake failed: %w", err)
+	if err := client.Connect(ctx); err != nil {
+		return fmt.Errorf("QUIC connection failed: %w", err)
 	}
 
-	cm.sshClient = ssh.NewClient(sshClientConn, sshChans, sshReqs)
-	slog.Info("Connected to server via KCP+SSH (Resilient)", "layer", "ssh")
-
+	slog.Info("Connected to server via QUIC+mTLS", "addr", cm.cfg.ServerAddr)
 	return nil
 }
 
-// waitForDisconnection blocks until the connection is lost
+// waitForDisconnection blocks until the QUIC connection is lost
 func (cm *connectionManager) waitForDisconnection(ctx context.Context) {
 	cm.mu.RLock()
-	client := cm.sshClient
+	client := cm.quicClient
 	cm.mu.RUnlock()
 
 	if client == nil {
 		return
 	}
 
-	done := make(chan struct{})
-	go func() {
-		client.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-ctx.Done():
-		cm.closeConnection()
-	case <-done:
-		slog.Info("SSH connection died. Reconnecting...")
+	if err := client.WaitForDisconnection(ctx); err != nil {
+		if err == ctx.Err() {
+			cm.closeConnection()
+		}
+	} else {
+		slog.Info("QUIC connection died. Reconnecting...")
 	}
 }
 
@@ -283,30 +242,15 @@ func (cm *connectionManager) closeConnection() {
 
 // closeConnectionLocked closes the current connection (must hold lock)
 func (cm *connectionManager) closeConnectionLocked() {
-	if cm.sshClient != nil {
-		cm.sshClient.Close()
-		cm.sshClient = nil
+	if cm.quicClient != nil {
+		cm.quicClient.Close()
+		cm.quicClient = nil
 	}
-	if cm.kcpConn != nil {
-		cm.kcpConn.Close()
-		cm.kcpConn = nil
-	}
-	if cm.packetConn != nil {
-		cm.packetConn.Close()
-		cm.packetConn = nil
-	}
-}
-
-// handleConnectivityFailure is called when connectivity issues are detected
-func (cm *connectionManager) handleConnectivityFailure(result network.DiagnosticResult) bool {
-	// Let resilient UDP default rebind logic handle all failure types.
-	// TUN route updates are handled by the dedicated route monitor path.
-	return false
 }
 
 // cleanup closes all connections and cleans up resources
 func (cm *connectionManager) cleanup() {
-	slog.Info("Explicitly disconnecting from server...", "layer", "ssh")
+	slog.Info("Explicitly disconnecting from server...")
 	cm.closeConnection()
 
 	// Allow time for graceful shutdown
@@ -329,27 +273,38 @@ func startProxy(ctx context.Context, cfg *config.ClientConfig, connMgr *connecti
 
 // startSOCKS5Proxy starts the SOCKS5 proxy server
 func startSOCKS5Proxy(ctx context.Context, cfg *config.ClientConfig, connMgr *connectionManager) error {
-	return startSOCKS5Server(ctx, cfg.ListenAddr, cfg.TCPBufSize, connMgr.getSSHClient, "socks5")
+	return startSOCKS5Server(ctx, cfg.ListenAddr, cfg.TCPBufSize, connMgr.getQUICClient, "socks5")
 }
 
 // startSOCKS5Server is a helper that starts a SOCKS5 server with the given configuration
-
-func startSOCKS5Server(ctx context.Context, listenAddr string, tcpBufSize int, getClient func() *ssh.Client, layer string) error {
+func startSOCKS5Server(ctx context.Context, listenAddr string, tcpBufSize int, getClient func() *quictransport.Client, layer string) error {
 	slog.Info("SOCKS5 TCP/UDP proxy listening", "layer", layer, "addr", listenAddr)
 	return socks5.ServeSOCKS5(ctx, listenAddr, tcpBufSize,
 		func(ctx context.Context, addr string) (net.Conn, error) {
 			client := getClient()
 			if client == nil {
-				return nil, fmt.Errorf("ssh client not connected")
+				return nil, fmt.Errorf("quic client not connected")
 			}
-			return socks5.DialTCP(ctx, client, addr)
+			stream, err := client.OpenTCPStream(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("failed to open TCP stream: %w", err)
+			}
+			return stream, nil
 		},
 		func(ctx context.Context) (net.Addr, io.Closer, error) {
 			client := getClient()
 			if client == nil {
-				return nil, nil, fmt.Errorf("ssh client not connected")
+				return nil, nil, fmt.Errorf("quic client not connected")
 			}
-			return socks5.DialUDP(ctx, client, config.LocalhostIPv4)
+			stream, err := client.OpenUDPStream(ctx)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to open UDP stream: %w", err)
+			}
+			localAddr := client.LocalAddr()
+			if localAddr == nil {
+				localAddr = &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}
+			}
+			return localAddr, stream, nil
 		})
 }
 
@@ -361,15 +316,15 @@ func shouldFallbackToSOCKS5(err error) bool {
 	return errors.Is(err, tun.ErrTUNNotSupported)
 }
 
-// startTUNTunnel starts the TUN tunnel with fallback to SOCKS5
-func waitForSSHClient(ctx context.Context, connMgr *connectionManager) (*ssh.Client, error) {
+// waitForQUICClient waits for the QUIC client to be connected before starting TUN
+func waitForQUICClient(ctx context.Context, connMgr *connectionManager) (*quictransport.Client, error) {
 	for {
-		client := connMgr.getSSHClient()
-		if client != nil {
+		client := connMgr.getQUICClient()
+		if client != nil && client.IsConnected() {
 			return client, nil
 		}
 
-		slog.Warn("Waiting for SSH connection before starting TUN...")
+		slog.Warn("Waiting for QUIC connection before starting TUN...")
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -414,7 +369,7 @@ func shouldRestartTUN(ctx context.Context) bool {
 func runTUNLoop(ctx context.Context, connMgr *connectionManager, tunCfg *tun.Config, routes string, autoRoute bool, serverAddr string, fallbackCh chan<- struct{}) {
 	tunFailed := false
 	for {
-		client, err := waitForSSHClient(ctx, connMgr)
+		client, err := waitForQUICClient(ctx, connMgr)
 		if err != nil {
 			return
 		}
@@ -434,7 +389,7 @@ func runTUNLoop(ctx context.Context, connMgr *connectionManager, tunCfg *tun.Con
 
 func startSOCKS5Fallback(ctx context.Context, listenAddr string, connMgr *connectionManager) {
 	go func() {
-		if err := startSOCKS5Server(ctx, listenAddr, connMgr.cfg.TCPBufSize, connMgr.getSSHClient, "fallback"); err != nil && !errors.Is(err, context.Canceled) {
+		if err := startSOCKS5Server(ctx, listenAddr, connMgr.cfg.TCPBufSize, connMgr.getQUICClient, "fallback"); err != nil && !errors.Is(err, context.Canceled) {
 			slog.Error("SOCKS5 proxy server stopped", "layer", "fallback", "error", err)
 		}
 	}()

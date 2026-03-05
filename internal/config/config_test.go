@@ -29,29 +29,6 @@ func TestNewDefaultCommonConfig(t *testing.T) {
 	if cfg.UDPSockBuf != DefaultUDPSockBuf {
 		t.Errorf("Expected UDPSockBuf %d, got %d", DefaultUDPSockBuf, cfg.UDPSockBuf)
 	}
-
-	// Test KCP defaults
-	if cfg.KCP.NoDelay != DefaultKCPNoDelay {
-		t.Errorf("Expected KCP.NoDelay %d, got %d", DefaultKCPNoDelay, cfg.KCP.NoDelay)
-	}
-	if cfg.KCP.Interval != DefaultKCPInterval {
-		t.Errorf("Expected KCP.Interval %d, got %d", DefaultKCPInterval, cfg.KCP.Interval)
-	}
-	if cfg.KCP.Resend != DefaultKCPResend {
-		t.Errorf("Expected KCP.Resend %d, got %d", DefaultKCPResend, cfg.KCP.Resend)
-	}
-	if cfg.KCP.NoCongestionCtrl != DefaultKCPNC {
-		t.Errorf("Expected KCP.NoCongestionCtrl %d, got %d", DefaultKCPNC, cfg.KCP.NoCongestionCtrl)
-	}
-	if cfg.KCP.SndWnd != DefaultKCPSndWnd {
-		t.Errorf("Expected KCP.SndWnd %d, got %d", DefaultKCPSndWnd, cfg.KCP.SndWnd)
-	}
-	if cfg.KCP.RcvWnd != DefaultKCPRcvWnd {
-		t.Errorf("Expected KCP.RcvWnd %d, got %d", DefaultKCPRcvWnd, cfg.KCP.RcvWnd)
-	}
-	if cfg.KCP.MTU != DefaultKCPMTU {
-		t.Errorf("Expected KCP.MTU %d, got %d", DefaultKCPMTU, cfg.KCP.MTU)
-	}
 }
 
 func TestNewDefaultServerConfig(t *testing.T) {
@@ -122,42 +99,6 @@ func TestNewDefaultClientConfig(t *testing.T) {
 	}
 }
 
-func TestKCPConfigToKCPConfig(t *testing.T) {
-	cfg := KCPConfig{
-		NoDelay:          1,
-		Interval:         10,
-		Resend:           2,
-		NoCongestionCtrl: 1,
-		SndWnd:           1024,
-		RcvWnd:           1024,
-		MTU:              1350,
-	}
-
-	kcpCfg := cfg.ToKCPConfig()
-
-	if kcpCfg.NoDelay != cfg.NoDelay {
-		t.Errorf("Expected NoDelay %d, got %d", cfg.NoDelay, kcpCfg.NoDelay)
-	}
-	if kcpCfg.Interval != cfg.Interval {
-		t.Errorf("Expected Interval %d, got %d", cfg.Interval, kcpCfg.Interval)
-	}
-	if kcpCfg.Resend != cfg.Resend {
-		t.Errorf("Expected Resend %d, got %d", cfg.Resend, kcpCfg.Resend)
-	}
-	if kcpCfg.NoCongestionCtrl != cfg.NoCongestionCtrl {
-		t.Errorf("Expected NoCongestionCtrl %d, got %d", cfg.NoCongestionCtrl, kcpCfg.NoCongestionCtrl)
-	}
-	if kcpCfg.SndWnd != cfg.SndWnd {
-		t.Errorf("Expected SndWnd %d, got %d", cfg.SndWnd, kcpCfg.SndWnd)
-	}
-	if kcpCfg.RcvWnd != cfg.RcvWnd {
-		t.Errorf("Expected RcvWnd %d, got %d", cfg.RcvWnd, kcpCfg.RcvWnd)
-	}
-	if kcpCfg.MTU != cfg.MTU {
-		t.Errorf("Expected MTU %d, got %d", cfg.MTU, kcpCfg.MTU)
-	}
-}
-
 func TestAddCommonFlags(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	cfg := &CommonConfig{}
@@ -169,8 +110,6 @@ func TestAddCommonFlags(t *testing.T) {
 		"log-level", "log-format",
 		"idle-timeout", "reconnect-interval",
 		"tcp-buf", "udp-sockbuf",
-		"kcp-nodelay", "kcp-interval", "kcp-resend", "kcp-nc",
-		"kcp-sndwnd", "kcp-rcvwnd", "kcp-mtu",
 		"ssh-dir", "ssh-private-key",
 	}
 
@@ -189,11 +128,6 @@ func TestAddCommonFlags(t *testing.T) {
 	cmd.Flags().Set("tcp-buf", "65536")
 	if cfg.TCPBufSize != 65536 {
 		t.Errorf("Expected TCPBufSize 65536, got %d", cfg.TCPBufSize)
-	}
-
-	cmd.Flags().Set("kcp-mtu", "1400")
-	if cfg.KCP.MTU != 1400 {
-		t.Errorf("Expected KCP.MTU 1400, got %d", cfg.KCP.MTU)
 	}
 }
 
@@ -398,15 +332,6 @@ func TestConfigStructFields(t *testing.T) {
 		ReconnectInterval: 5 * time.Second,
 		TCPBufSize:        65536,
 		UDPSockBuf:        8388608,
-		KCP: KCPConfig{
-			NoDelay:          1,
-			Interval:         10,
-			Resend:           2,
-			NoCongestionCtrl: 1,
-			SndWnd:           2048,
-			RcvWnd:           2048,
-			MTU:              1400,
-		},
 		SSH: SSHConfig{
 			Dir:            "/test/.ssh",
 			PrivateKey:     "/test/.ssh/id_rsa",

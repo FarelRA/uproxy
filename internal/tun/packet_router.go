@@ -101,7 +101,7 @@ func (pr *PacketRouter) routePacketToClient(packet []byte, dstIP string) {
 		return
 	}
 
-	// Send packet to client's SSH channel (framed) with quick retry
+	// Send packet to client's QUIC stream (framed) with quick retry
 	select {
 	case <-route.done:
 		// Client disconnected
@@ -110,7 +110,7 @@ func (pr *PacketRouter) routePacketToClient(packet []byte, dstIP string) {
 		const maxRetries = 3
 		var lastErr error
 		for retry := 0; retry < maxRetries; retry++ {
-			if err := framing.WriteFramed(route.Channel, packet); err != nil {
+			if err := framing.WriteFramed(route.Conn, packet); err != nil {
 				lastErr = err
 				// Quick retry without sleep to avoid blocking dispatch loop
 				continue

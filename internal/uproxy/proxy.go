@@ -15,9 +15,8 @@ import (
 const DefaultTCPBufSize = 32768
 
 // idleTimeout is the maximum time a connection can be idle before timing out.
-// Set to 30 hours to ensure the proxy survives 24+ hours of network downtime.
-// This allows the underlying ResilientPacketConn to handle reconnection without
-// timing out the application-level streams prematurely.
+// Set to 30 hours to ensure the proxy survives 24+ hours of network downtime
+// without timing out the application-level streams prematurely.
 const idleTimeout = 30 * time.Hour
 
 // copyWithDeadline copies data from src to dst with idle timeout protection.

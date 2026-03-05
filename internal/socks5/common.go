@@ -9,13 +9,7 @@ import (
 
 var errTargetHeaderTooLong = errors.New("target header too long")
 
-// SSH Channel names used for multiplexing
-const (
-	ChannelTypeTCP = "socks5-tcp"
-	ChannelTypeUDP = "socks5-udp"
-)
-
-// WriteTargetHeader writes the target address to the SSH channel during initialization
+// WriteTargetHeader writes the target address to the stream during initialization
 func WriteTargetHeader(w io.Writer, target string) error {
 	targetBytes := []byte(target)
 	if len(targetBytes) > 0xFFFF {
@@ -30,7 +24,7 @@ func WriteTargetHeader(w io.Writer, target string) error {
 	return err
 }
 
-// ReadTargetHeader reads the target address from the SSH channel during initialization
+// ReadTargetHeader reads the target address from the stream during initialization
 func ReadTargetHeader(r io.Reader) (string, error) {
 	var lenBuf [2]byte
 	if _, err := io.ReadFull(r, lenBuf[:]); err != nil {

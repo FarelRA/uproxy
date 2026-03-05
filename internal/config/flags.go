@@ -20,15 +20,6 @@ func AddCommonFlags(cmd *cobra.Command, cfg *CommonConfig) {
 	cmd.Flags().IntVar(&cfg.TCPBufSize, "tcp-buf", DefaultTCPBufSize, "TCP buffer size")
 	cmd.Flags().IntVar(&cfg.UDPSockBuf, "udp-sockbuf", DefaultUDPSockBuf, "UDP socket buffer size")
 
-	// KCP flags
-	cmd.Flags().IntVar(&cfg.KCP.NoDelay, "kcp-nodelay", DefaultKCPNoDelay, "KCP nodelay mode (0=disabled, 1=enabled)")
-	cmd.Flags().IntVar(&cfg.KCP.Interval, "kcp-interval", DefaultKCPInterval, "KCP internal update interval (ms)")
-	cmd.Flags().IntVar(&cfg.KCP.Resend, "kcp-resend", DefaultKCPResend, "KCP fast resend mode")
-	cmd.Flags().IntVar(&cfg.KCP.NoCongestionCtrl, "kcp-nc", DefaultKCPNC, "KCP no congestion control (0=disabled, 1=enabled)")
-	cmd.Flags().IntVar(&cfg.KCP.SndWnd, "kcp-sndwnd", DefaultKCPSndWnd, "KCP send window size")
-	cmd.Flags().IntVar(&cfg.KCP.RcvWnd, "kcp-rcvwnd", DefaultKCPRcvWnd, "KCP receive window size")
-	cmd.Flags().IntVar(&cfg.KCP.MTU, "kcp-mtu", DefaultKCPMTU, "KCP maximum transmission unit")
-
 	// SSH flags
 	cmd.Flags().StringVar(&cfg.SSH.Dir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
 	cmd.Flags().StringVar(&cfg.SSH.PrivateKey, "ssh-private-key", "", "SSH private key file (default: <ssh-dir>/id_ed25519)")
@@ -63,7 +54,7 @@ func AddClientFlags(cmd *cobra.Command, cfg *ClientConfig) {
 	cmd.Flags().StringVarP(&cfg.Mode, "mode", "m", "auto", "Proxy mode (auto, socks5, tun)")
 	cmd.Flags().StringVarP(&cfg.ListenAddr, "listen", "l", "127.0.0.1:1080", "SOCKS5 listen address (host:port)")
 	cmd.Flags().StringVarP(&cfg.ServerAddr, "server", "s", "", "Server address (host:port) [required]")
-	cmd.Flags().StringVar(&cfg.BindAddr, "bind-addr", DefaultClientBindAddr, "UDP bind address for KCP connection")
+	cmd.Flags().StringVar(&cfg.BindAddr, "bind-addr", DefaultClientBindAddr, "UDP bind address for QUIC connection")
 	cmd.Flags().DurationVar(&cfg.SSHTimeout, "ssh-timeout", DefaultSSHTimeout, "SSH connection timeout")
 
 	// SSH client flags

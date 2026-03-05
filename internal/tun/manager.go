@@ -4,9 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
-
-	"golang.org/x/crypto/ssh"
 )
 
 // TUNManager manages a single TUN device shared by multiple clients.
@@ -25,7 +24,7 @@ type TUNManager struct {
 type ClientRoute struct {
 	IPv4     string
 	IPv6     string
-	Channel  ssh.Channel
+	Conn     net.Conn
 	done     chan struct{}
 	doneOnce sync.Once // Ensures done channel is closed only once
 }
@@ -80,13 +79,13 @@ func (m *TUNManager) AllocateIP() (ipv4 string, ipv6 string, err error) {
 
 // AllocateAndNotifyClient allocates IPs, notifies the client, and registers them.
 // This is a convenience method that combines AllocateIP, notification, and RegisterClient.
-func (m *TUNManager) AllocateAndNotifyClient(channel ssh.Channel) (*ClientRoute, string, string, error) {
-	return m.ClientRegistry.AllocateAndNotifyClient(channel)
+func (m *TUNManager) AllocateAndNotifyClient(conn net.Conn) (*ClientRoute, string, string, error) {
+	return m.ClientRegistry.AllocateAndNotifyClient(conn)
 }
 
-// RegisterClient registers a client with its assigned IPs and channel.
-func (m *TUNManager) RegisterClient(ipv4, ipv6 string, channel ssh.Channel) *ClientRoute {
-	return m.ClientRegistry.RegisterClient(ipv4, ipv6, channel)
+// RegisterClient registers a client with its assigned IPs and connection.
+func (m *TUNManager) RegisterClient(ipv4, ipv6 string, conn net.Conn) *ClientRoute {
+	return m.ClientRegistry.RegisterClient(ipv4, ipv6, conn)
 }
 
 // UnregisterClient removes a client and frees its IPs back to the pool.

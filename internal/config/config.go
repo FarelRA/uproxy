@@ -1,12 +1,10 @@
 // Package config provides configuration structures and default values for uproxy.
-// It includes client and server configuration options, KCP parameters, and
-// shared constants used throughout the application.
+// It includes client and server configuration options and shared constants
+// used throughout the application.
 package config
 
 import (
 	"time"
-
-	"uproxy/internal/kcp"
 )
 
 // Default constants shared between client and server
@@ -23,37 +21,7 @@ type CommonConfig struct {
 	TCPBufSize int
 	UDPSockBuf int
 
-	KCP KCPConfig
 	SSH SSHConfig
-}
-
-// KCPConfig holds KCP protocol configuration
-type KCPConfig struct {
-	NoDelay          int
-	Interval         int
-	Resend           int
-	NoCongestionCtrl int
-	SndWnd           int
-	RcvWnd           int
-	MTU              int
-
-	cachedKCPConfig *kcp.Config // cached conversion result
-}
-
-// ToKCPConfig converts to internal kcp.Config (cached)
-func (c *KCPConfig) ToKCPConfig() *kcp.Config {
-	if c.cachedKCPConfig == nil {
-		c.cachedKCPConfig = &kcp.Config{
-			NoDelay:          c.NoDelay,
-			Interval:         c.Interval,
-			Resend:           c.Resend,
-			NoCongestionCtrl: c.NoCongestionCtrl,
-			SndWnd:           c.SndWnd,
-			RcvWnd:           c.RcvWnd,
-			MTU:              c.MTU,
-		}
-	}
-	return c.cachedKCPConfig
 }
 
 // SSHConfig holds SSH configuration paths
@@ -93,7 +61,7 @@ type ClientConfig struct {
 	Mode       string
 	ListenAddr string
 	ServerAddr string
-	BindAddr   string // UDP bind address for KCP connection
+	BindAddr   string // UDP bind address for QUIC connection
 
 	SSHTimeout time.Duration
 
@@ -117,16 +85,7 @@ func NewDefaultCommonConfig() CommonConfig {
 		ReconnectInterval: DefaultReconnectInterval,
 		TCPBufSize:        DefaultTCPBufSize,
 		UDPSockBuf:        DefaultUDPSockBuf,
-		KCP: KCPConfig{
-			NoDelay:          DefaultKCPNoDelay,
-			Interval:         DefaultKCPInterval,
-			Resend:           DefaultKCPResend,
-			NoCongestionCtrl: DefaultKCPNC,
-			SndWnd:           DefaultKCPSndWnd,
-			RcvWnd:           DefaultKCPRcvWnd,
-			MTU:              DefaultKCPMTU,
-		},
-		SSH: SSHConfig{},
+		SSH:               SSHConfig{},
 	}
 }
 

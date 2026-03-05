@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/crypto/ssh"
 	"uproxy/internal/common"
 	"uproxy/internal/config"
 	"uproxy/internal/framing"
+	"uproxy/internal/quictransport"
 	"uproxy/internal/uproxy"
 )
 
@@ -47,25 +47,25 @@ func parseSOCKS5UDPHeader(data []byte) (target string, payload []byte, header []
 }
 
 // udpSessionManager manages UDP sessions for SOCKS5 UDP ASSOCIATE requests.
-// It maintains a mapping of target addresses to SSH channels, allowing multiple
+// It maintains a mapping of target addresses to QUIC streams, allowing multiple
 // UDP destinations to be multiplexed over a single UDP socket. The manager handles
 // session creation, reuse, and cleanup for efficient UDP proxying.
 //
 // Thread-safe: All public methods use mutex locking to ensure concurrent access safety.
 type udpSessionManager struct {
-	sessions   map[string]ssh.Channel // Maps target addresses to SSH channels
-	mu         sync.Mutex             // Protects sessions and clientAddr
-	clientAddr *net.UDPAddr           // Client's UDP address for sending responses
-	sshClient  *ssh.Client            // SSH client for creating new channels
-	conn       *net.UDPConn           // Local UDP socket for client communication
-	wg         sync.WaitGroup         // Tracks active session goroutines
+	sessions   map[string]net.Conn   // Maps target addresses to QUIC streams
+	mu         sync.Mutex            // Protects sessions and clientAddr
+	clientAddr *net.UDPAddr          // Client's UDP address for sending responses
+	quicClient *quictransport.Client // QUIC client for creating new streams
+	conn       *net.UDPConn          // Local UDP socket for client communication
+	wg         sync.WaitGroup        // Tracks active session goroutines
 }
 
-func newUDPSessionManager(sshClient *ssh.Client, conn *net.UDPConn) *udpSessionManager {
+func newUDPSessionManager(quicClient *quictransport.Client, conn *net.UDPConn) *udpSessionManager {
 	return &udpSessionManager{
-		sessions:  make(map[string]ssh.Channel),
-		sshClient: sshClient,
-		conn:      conn,
+		sessions:   make(map[string]net.Conn),
+		quicClient: quicClient,
+		conn:       conn,
 	}
 }
 
@@ -75,22 +75,22 @@ func (m *udpSessionManager) setClientAddr(addr *net.UDPAddr) {
 	m.clientAddr = addr
 }
 
-func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) (ssh.Channel, error) {
+func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) (net.Conn, error) {
 	m.mu.Lock()
-	channel, exists := m.sessions[targetStr]
+	stream, exists := m.sessions[targetStr]
 	m.mu.Unlock()
 
 	if exists {
-		return channel, nil
+		return stream, nil
 	}
 
-	ch, err := uproxy.OpenSSHChannel(m.sshClient, ChannelTypeUDP)
+	stream, err := m.quicClient.OpenUDPStream(context.Background())
 	if err != nil {
 		return nil, err
 	}
 
-	if err := WriteTargetHeader(ch, targetStr); err != nil {
-		ch.Close()
+	if err := WriteTargetHeader(stream, targetStr); err != nil {
+		stream.Close()
 		return nil, err
 	}
 
@@ -98,20 +98,20 @@ func (m *udpSessionManager) getOrCreateSession(targetStr string, header []byte) 
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sessions[targetStr] = ch
+	m.sessions[targetStr] = stream
 
 	m.wg.Add(1)
-	go m.handleSessionResponses(targetStr, ch, header)
+	go m.handleSessionResponses(targetStr, stream, header)
 
-	return ch, nil
+	return stream, nil
 }
 
-func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel, header []byte) {
+func (m *udpSessionManager) handleSessionResponses(target string, stream net.Conn, header []byte) {
 	start := time.Now()
 	var txBytes, rxBytes int64
 	defer func() {
 		m.wg.Done()
-		ch.Close()
+		stream.Close()
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		delete(m.sessions, target)
@@ -119,7 +119,7 @@ func (m *udpSessionManager) handleSessionResponses(target string, ch ssh.Channel
 	}()
 
 	for {
-		data, err := framing.ReadFramed(ch)
+		data, err := framing.ReadFramed(stream)
 		if err != nil {
 			return
 		}
@@ -161,9 +161,9 @@ func (m *udpSessionManager) closeAllSessions() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	for target, ch := range m.sessions {
-		if err := ch.Close(); err != nil {
-			slog.Debug("Failed to close UDP session channel", "target", target, "error", err)
+	for target, stream := range m.sessions {
+		if err := stream.Close(); err != nil {
+			slog.Debug("Failed to close UDP session stream", "target", target, "error", err)
 		}
 		delete(m.sessions, target)
 	}
@@ -182,8 +182,8 @@ func (c *udpCloser) Close() error {
 	return err
 }
 
-// DialUDP runs on the client side. It binds a local UDP socket and pipes SOCKS5 UDP frames into SSH channels.
-func DialUDP(ctx context.Context, sshClient *ssh.Client, listenIP string) (net.Addr, io.Closer, error) {
+// DialUDP runs on the client side. It binds a local UDP socket and pipes SOCKS5 UDP frames into QUIC streams.
+func DialUDP(ctx context.Context, quicClient *quictransport.Client, listenIP string) (net.Addr, io.Closer, error) {
 	udpAddr, err := net.ResolveUDPAddr("udp", net.JoinHostPort(listenIP, "0"))
 	if err != nil {
 		return nil, nil, err
@@ -193,7 +193,7 @@ func DialUDP(ctx context.Context, sshClient *ssh.Client, listenIP string) (net.A
 		return nil, nil, err
 	}
 
-	sessionMgr := newUDPSessionManager(sshClient, conn)
+	sessionMgr := newUDPSessionManager(quicClient, conn)
 
 	go func() {
 		defer conn.Close()
@@ -239,8 +239,8 @@ func withUDPBuffer(fn func([]byte)) {
 	fn(*bufPtr)
 }
 
-// forwardChannelToConn forwards data from SSH channel to UDP connection.
-func forwardChannelToConn(ctx context.Context, channel ssh.Channel, conn net.Conn, txBytes *int64, timeout time.Duration) {
+// forwardStreamToConn forwards data from QUIC stream to UDP connection.
+func forwardStreamToConn(ctx context.Context, stream net.Conn, conn net.Conn, txBytes *int64, timeout time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -248,13 +248,13 @@ func forwardChannelToConn(ctx context.Context, channel ssh.Channel, conn net.Con
 		default:
 		}
 
-		data, err := framing.ReadFramed(channel)
+		data, err := framing.ReadFramed(stream)
 		if err != nil {
 			return
 		}
 		n, err := conn.Write(data)
 		if err != nil {
-			common.LogError("ssh_udp", "Failed to write UDP data", "error", err)
+			common.LogError("quic_udp", "Failed to write UDP data", "error", err)
 			return
 		}
 		*txBytes += int64(n)
@@ -262,8 +262,8 @@ func forwardChannelToConn(ctx context.Context, channel ssh.Channel, conn net.Con
 	}
 }
 
-// forwardConnToChannel forwards data from UDP connection to SSH channel.
-func forwardConnToChannel(ctx context.Context, conn net.Conn, channel ssh.Channel, rxBytes *int64, timeout time.Duration) {
+// forwardConnToStream forwards data from UDP connection to QUIC stream.
+func forwardConnToStream(ctx context.Context, conn net.Conn, stream net.Conn, rxBytes *int64, timeout time.Duration) {
 	withUDPBuffer(func(buf []byte) {
 		for {
 			select {
@@ -278,7 +278,7 @@ func forwardConnToChannel(ctx context.Context, conn net.Conn, channel ssh.Channe
 				return
 			}
 
-			if err := framing.WriteFramed(channel, buf[:n]); err != nil {
+			if err := framing.WriteFramed(stream, buf[:n]); err != nil {
 				return
 			}
 			*rxBytes += int64(n)
@@ -286,52 +286,52 @@ func forwardConnToChannel(ctx context.Context, conn net.Conn, channel ssh.Channe
 	})
 }
 
-// proxyUDPBidirectional handles bidirectional UDP forwarding between SSH channel and UDP connection.
-func proxyUDPBidirectional(channel ssh.Channel, conn net.Conn) (txBytes, rxBytes int64) {
+// proxyUDPBidirectional handles bidirectional UDP forwarding between QUIC stream and UDP connection.
+func proxyUDPBidirectional(stream net.Conn, conn net.Conn) (txBytes, rxBytes int64) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var wg sync.WaitGroup
 
-	// SSH -> Internet (TX)
+	// QUIC -> Internet (TX)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		defer cancel() // Signal other goroutine to stop
-		forwardChannelToConn(ctx, channel, conn, &txBytes, config.DefaultUDPTimeout)
+		forwardStreamToConn(ctx, stream, conn, &txBytes, config.DefaultUDPTimeout)
 	}()
 
-	// Internet -> SSH (RX)
+	// Internet -> QUIC (RX)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		defer cancel() // Signal other goroutine to stop
-		forwardConnToChannel(ctx, conn, channel, &rxBytes, config.DefaultUDPTimeout)
+		forwardConnToStream(ctx, conn, stream, &rxBytes, config.DefaultUDPTimeout)
 	}()
 
 	wg.Wait()
 	return
 }
 
-// HandleUDP runs on the server side to handle an incoming UDP SSH channel.
-func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTimeout time.Duration) {
-	defer channel.Close()
+// HandleUDP runs on the server side to handle an incoming UDP QUIC stream.
+func HandleUDP(ctx context.Context, stream net.Conn, outbound string, dialTimeout time.Duration) {
+	defer stream.Close()
 
-	targetAddr, err := ReadTargetHeader(channel)
+	targetAddr, err := ReadTargetHeader(stream)
 	if err != nil {
-		common.LogError("ssh_udp", "Failed to read UDP target header", "error", err)
+		common.LogError("quic_udp", "Failed to read UDP target header", "error", err)
 		return
 	}
 
 	dialer, err := uproxy.CreateDialer("udp", outbound, dialTimeout)
 	if err != nil {
-		common.LogError("ssh_udp", "Failed to create dialer", "iface", outbound, "error", err)
+		common.LogError("quic_udp", "Failed to create dialer", "iface", outbound, "error", err)
 		return
 	}
 
 	conn, err := dialer.DialContext(ctx, "udp", targetAddr)
 	if err != nil {
-		common.LogError("ssh_udp", "Failed to dial UDP target", "target", targetAddr, "error", err)
+		common.LogError("quic_udp", "Failed to dial UDP target", "target", targetAddr, "error", err)
 		return
 	}
 	defer conn.Close()
@@ -343,7 +343,7 @@ func HandleUDP(ctx context.Context, channel ssh.Channel, outbound string, dialTi
 	start := time.Now()
 	common.LogInfo("socks5_udp", "UDP Stream started", "role", "server", "target", targetAddr)
 
-	txBytes, rxBytes := proxyUDPBidirectional(channel, conn)
+	txBytes, rxBytes := proxyUDPBidirectional(stream, conn)
 
 	common.LogInfo("socks5_udp", "UDP Stream closed", "role", "server", "target", targetAddr, "tx_bytes", txBytes, "rx_bytes", rxBytes, "duration", time.Since(start).String())
 }

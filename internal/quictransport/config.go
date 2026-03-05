@@ -1,0 +1,205 @@
+package quictransport
+
+import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/quic-go/quic-go"
+)
+
+const (
+	// DefaultMaxIdleTimeout is the default maximum idle time before a connection is closed
+	DefaultMaxIdleTimeout = 1 * time.Hour
+
+	// DefaultKeepAlivePeriod is the default interval for sending keep-alive packets
+	DefaultKeepAlivePeriod = 30 * time.Second
+
+	// DefaultMaxIncomingStreams is the default maximum number of concurrent incoming streams (0 = unlimited)
+	DefaultMaxIncomingStreams = 0
+
+	// DefaultMaxIncomingUniStreams is the default maximum number of concurrent incoming unidirectional streams
+	DefaultMaxIncomingUniStreams = 0
+
+	// NextProtoUProxy is the ALPN protocol identifier for uproxy
+	NextProtoUProxy = "uproxy"
+)
+
+var (
+	// ErrNoCertificate is returned when no certificate is provided
+	ErrNoCertificate = errors.New("no certificate provided")
+	// ErrNoVerifyCallback is returned when no verification callback is provided
+	ErrNoVerifyCallback = errors.New("no verification callback provided")
+)
+
+// QUICConfigOptions contains options for creating a QUIC configuration.
+type QUICConfigOptions struct {
+	MaxIdleTimeout          time.Duration
+	KeepAlivePeriod         time.Duration
+	MaxIncomingStreams      int64
+	MaxIncomingUniStreams   int64
+	InitialStreamWindow     uint64
+	InitialConnectionWindow uint64
+	EnableDatagrams         bool
+	Allow0RTT               bool
+}
+
+// DefaultQUICConfigOptions returns the default QUIC configuration options.
+func DefaultQUICConfigOptions() *QUICConfigOptions {
+	return &QUICConfigOptions{
+		MaxIdleTimeout:          DefaultMaxIdleTimeout,
+		KeepAlivePeriod:         DefaultKeepAlivePeriod,
+		MaxIncomingStreams:      DefaultMaxIncomingStreams,
+		MaxIncomingUniStreams:   DefaultMaxIncomingUniStreams,
+		InitialStreamWindow:     0, // Use QUIC default
+		InitialConnectionWindow: 0, // Use QUIC default
+		EnableDatagrams:         true,
+		Allow0RTT:               true,
+	}
+}
+
+// NewQUICConfig creates a new QUIC configuration with the provided options.
+// If opts is nil, default options are used.
+func NewQUICConfig(opts *QUICConfigOptions) *quic.Config {
+	if opts == nil {
+		opts = DefaultQUICConfigOptions()
+	}
+
+	config := &quic.Config{
+		MaxIdleTimeout:  opts.MaxIdleTimeout,
+		KeepAlivePeriod: opts.KeepAlivePeriod,
+		EnableDatagrams: opts.EnableDatagrams,
+		Allow0RTT:       opts.Allow0RTT,
+	}
+
+	if opts.MaxIncomingStreams > 0 {
+		config.MaxIncomingStreams = opts.MaxIncomingStreams
+	}
+
+	if opts.MaxIncomingUniStreams > 0 {
+		config.MaxIncomingUniStreams = opts.MaxIncomingUniStreams
+	}
+
+	if opts.InitialStreamWindow > 0 {
+		config.InitialStreamReceiveWindow = opts.InitialStreamWindow
+	}
+
+	if opts.InitialConnectionWindow > 0 {
+		config.InitialConnectionReceiveWindow = opts.InitialConnectionWindow
+	}
+
+	return config
+}
+
+// NewClientTLSConfig creates a TLS configuration for a QUIC client.
+// The certificate is the client's certificate (generated from SSH key).
+// The verifyCallback is called to verify the server's certificate.
+func NewClientTLSConfig(certificate tls.Certificate, verifyCallback func([][]byte, [][]*x509.Certificate) error) (*tls.Config, error) {
+	if len(certificate.Certificate) == 0 {
+		return nil, ErrNoCertificate
+	}
+
+	if verifyCallback == nil {
+		return nil, ErrNoVerifyCallback
+	}
+
+	return &tls.Config{
+		Certificates:          []tls.Certificate{certificate},
+		NextProtos:            []string{NextProtoUProxy},
+		ClientAuth:            tls.NoClientCert,
+		VerifyPeerCertificate: verifyCallback,
+		InsecureSkipVerify:    true, // Required when using custom VerifyPeerCertificate
+		MinVersion:            tls.VersionTLS13,
+	}, nil
+}
+
+// NewServerTLSConfig creates a TLS configuration for a QUIC server.
+// The certificate is the server's certificate (generated from SSH key).
+// The verifyCallback is called to verify each client's certificate.
+func NewServerTLSConfig(certificate tls.Certificate, verifyCallback func([][]byte, [][]*x509.Certificate) error) (*tls.Config, error) {
+	if len(certificate.Certificate) == 0 {
+		return nil, ErrNoCertificate
+	}
+
+	if verifyCallback == nil {
+		return nil, ErrNoVerifyCallback
+	}
+
+	return &tls.Config{
+		Certificates:          []tls.Certificate{certificate},
+		NextProtos:            []string{NextProtoUProxy},
+		ClientAuth:            tls.RequireAnyClientCert, // Require client certificates for mTLS
+		VerifyPeerCertificate: verifyCallback,
+		MinVersion:            tls.VersionTLS13,
+	}, nil
+}
+
+// ValidateQUICConfig validates a QUIC configuration and returns an error if invalid.
+func ValidateQUICConfig(config *quic.Config) error {
+	if config == nil {
+		return errors.New("QUIC config is nil")
+	}
+
+	if config.MaxIdleTimeout < 0 {
+		return fmt.Errorf("MaxIdleTimeout must be non-negative, got %v", config.MaxIdleTimeout)
+	}
+
+	if config.MaxIdleTimeout > 0 && config.MaxIdleTimeout < 10*time.Second {
+		return fmt.Errorf("MaxIdleTimeout is too short (<%v), may cause frequent disconnections", 10*time.Second)
+	}
+
+	if config.KeepAlivePeriod < 0 {
+		return fmt.Errorf("KeepAlivePeriod must be non-negative, got %v", config.KeepAlivePeriod)
+	}
+
+	if config.KeepAlivePeriod > 0 && config.KeepAlivePeriod < 5*time.Second {
+		return fmt.Errorf("KeepAlivePeriod is too short (<%v), may cause excessive traffic", 5*time.Second)
+	}
+
+	if config.MaxIncomingStreams < 0 {
+		return fmt.Errorf("MaxIncomingStreams must be non-negative, got %d", config.MaxIncomingStreams)
+	}
+
+	if config.MaxIncomingUniStreams < 0 {
+		return fmt.Errorf("MaxIncomingUniStreams must be non-negative, got %d", config.MaxIncomingUniStreams)
+	}
+
+	return nil
+}
+
+// ValidateTLSConfig validates a TLS configuration and returns an error if invalid.
+func ValidateTLSConfig(config *tls.Config, isServer bool) error {
+	if config == nil {
+		return errors.New("TLS config is nil")
+	}
+
+	if len(config.Certificates) == 0 {
+		return errors.New("no certificates configured")
+	}
+
+	if len(config.NextProtos) == 0 {
+		return errors.New("no ALPN protocols configured")
+	}
+
+	if config.VerifyPeerCertificate == nil {
+		return errors.New("no peer certificate verification callback configured")
+	}
+
+	if isServer {
+		if config.ClientAuth != tls.RequireAnyClientCert {
+			return fmt.Errorf("server must require client certificates for mTLS, got ClientAuth=%v", config.ClientAuth)
+		}
+	} else {
+		if !config.InsecureSkipVerify {
+			return errors.New("client must set InsecureSkipVerify=true when using custom verification")
+		}
+	}
+
+	if config.MinVersion < tls.VersionTLS13 {
+		return fmt.Errorf("minimum TLS version must be 1.3, got %v", config.MinVersion)
+	}
+
+	return nil
+}

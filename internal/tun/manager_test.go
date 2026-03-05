@@ -55,7 +55,7 @@ func TestRegisterClient(t *testing.T) {
 		},
 	}
 
-	channel := testutil.NewMockSSHChannel()
+	channel := testutil.NewMockConn()
 	ipv4 := "10.0.0.2"
 	ipv6 := "fd00::2/64"
 
@@ -73,7 +73,7 @@ func TestRegisterClient(t *testing.T) {
 		t.Errorf("Expected IPv6 %s, got %s", ipv6, route.IPv6)
 	}
 
-	if route.Channel == nil {
+	if route.Conn == nil {
 		t.Error("Expected channel to be set")
 	}
 
@@ -96,7 +96,7 @@ func TestUnregisterClient(t *testing.T) {
 		},
 	}
 
-	channel := testutil.NewMockSSHChannel()
+	channel := testutil.NewMockConn()
 	ipv4 := "10.0.0.2"
 	ipv6 := "fd00::2/64"
 
@@ -147,7 +147,7 @@ func TestConcurrentClientOperations(t *testing.T) {
 				return
 			}
 
-			channel := testutil.NewMockSSHChannel()
+			channel := testutil.NewMockConn()
 			route := mgr.RegisterClient(ipv4, ipv6, channel)
 			if route == nil {
 				t.Error("RegisterClient returned nil")
@@ -182,7 +182,7 @@ func TestRegisterUnregisterCycle(t *testing.T) {
 
 	for i := 0; i < 10; i++ {
 		// Register
-		channel := testutil.NewMockSSHChannel()
+		channel := testutil.NewMockConn()
 		route := mgr.RegisterClient(ipv4, ipv6, channel)
 		if route == nil {
 			t.Fatalf("Iteration %d: RegisterClient failed", i)
@@ -229,7 +229,7 @@ func TestMultipleClientsWithDifferentIPs(t *testing.T) {
 
 	// Register all clients
 	for _, c := range clients {
-		channel := testutil.NewMockSSHChannel()
+		channel := testutil.NewMockConn()
 		route := mgr.RegisterClient(c.ipv4, c.ipv6, channel)
 		if route == nil {
 			t.Fatalf("Failed to register client %s", c.ipv4)
@@ -275,7 +275,7 @@ func TestAllocateAndNotifyClientWritesFramedAssignment(t *testing.T) {
 		},
 	}
 
-	channel := testutil.NewMockSSHChannel()
+	channel := testutil.NewMockConn()
 	route, ipv4, _, err := mgr.AllocateAndNotifyClient(channel)
 	if err != nil {
 		t.Fatalf("AllocateAndNotifyClient failed: %v", err)
@@ -354,7 +354,7 @@ func BenchmarkRegisterClient(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ipv4, ipv6, _ := mgr.AllocateIP()
-		channel := testutil.NewMockSSHChannel()
+		channel := testutil.NewMockConn()
 		mgr.RegisterClient(ipv4, ipv6, channel)
 	}
 }
@@ -372,7 +372,7 @@ func BenchmarkConcurrentRegister(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			ipv4, ipv6, _ := mgr.AllocateIP()
-			channel := testutil.NewMockSSHChannel()
+			channel := testutil.NewMockConn()
 			mgr.RegisterClient(ipv4, ipv6, channel)
 		}
 	})

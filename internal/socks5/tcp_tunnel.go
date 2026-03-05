@@ -6,30 +6,30 @@ import (
 	"net"
 	"time"
 
-	"golang.org/x/crypto/ssh"
 	"uproxy/internal/common"
+	"uproxy/internal/quictransport"
 	"uproxy/internal/uproxy"
 )
 
-// HandleTCP runs on the server side to handle an incoming TCP SSH channel.
-func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, outbound string, dialTimeout time.Duration, tcpBufSize int) {
-	defer channel.Close()
+// HandleTCP runs on the server side to handle an incoming TCP QUIC stream.
+func HandleTCP(ctx context.Context, stream net.Conn, remoteAddr net.Addr, outbound string, dialTimeout time.Duration, tcpBufSize int) {
+	defer stream.Close()
 
-	targetAddr, err := ReadTargetHeader(channel)
+	targetAddr, err := ReadTargetHeader(stream)
 	if err != nil {
-		common.LogError("ssh_tcp", "Failed to read TCP target header", "error", err)
+		common.LogError("quic_tcp", "Failed to read TCP target header", "error", err)
 		return
 	}
 
 	dialer, err := uproxy.CreateDialer("tcp", outbound, dialTimeout)
 	if err != nil {
-		common.LogError("ssh_tcp", "Failed to create dialer", "iface", outbound, "error", err)
+		common.LogError("quic_tcp", "Failed to create dialer", "iface", outbound, "error", err)
 		return
 	}
 
 	targetConn, err := dialer.DialContext(ctx, "tcp", targetAddr)
 	if err != nil {
-		common.LogError("ssh_tcp", "Failed to dial TCP target", "target", targetAddr, "error", err)
+		common.LogError("quic_tcp", "Failed to dial TCP target", "target", targetAddr, "error", err)
 		return
 	}
 	defer targetConn.Close()
@@ -37,20 +37,20 @@ func HandleTCP(ctx context.Context, channel ssh.Channel, remoteAddr net.Addr, ou
 	uproxy.OptimizeTCPConn(targetConn)
 
 	// Proxy bidirectionally with zero-copy pools and full telemetry
-	uproxy.ProxyBidi(ctx, uproxy.NewChannelConn(channel, targetConn.LocalAddr(), remoteAddr), targetConn, "socks5_server_tcp", targetAddr, tcpBufSize)
+	uproxy.ProxyBidi(ctx, stream, targetConn, "socks5_server_tcp", targetAddr, tcpBufSize)
 }
 
-// DialTCP runs on the client side to establish a new TCP SSH channel to the server.
-func DialTCP(ctx context.Context, sshClient *ssh.Client, targetAddr string) (net.Conn, error) {
-	channel, err := uproxy.OpenSSHChannel(sshClient, ChannelTypeTCP)
+// DialTCP runs on the client side to establish a new TCP QUIC stream to the server.
+func DialTCP(ctx context.Context, quicClient *quictransport.Client, targetAddr string) (net.Conn, error) {
+	stream, err := quicClient.OpenTCPStream(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := WriteTargetHeader(channel, targetAddr); err != nil {
-		channel.Close()
+	if err := WriteTargetHeader(stream, targetAddr); err != nil {
+		stream.Close()
 		return nil, fmt.Errorf("failed to write target header: %w", err)
 	}
 
-	return uproxy.NewChannelConn(channel, nil, nil), nil
+	return stream, nil
 }
