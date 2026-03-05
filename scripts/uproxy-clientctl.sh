@@ -19,16 +19,17 @@
 #   LOG_FORMAT          - Log format: console|json (default: console)
 #   IDLE_TIMEOUT        - Idle timeout duration (default: 1h)
 #   SSH_TIMEOUT         - SSH handshake timeout (default: 10s)
-#   RECONNECT_INTERVAL  - Reconnect interval on network drop (default: 1s)
 #   TCP_BUF             - TCP buffer size per stream (default: 32768)
-#   UDP_SOCKBUF         - UDP socket buffer size (default: 4194304)
-#   KCP_NODELAY         - KCP nodelay mode (default: 1)
-#   KCP_INTERVAL        - KCP timer interval in ms (default: 10)
-#   KCP_RESEND          - KCP fast resend mode (default: 2)
-#   KCP_NC              - KCP disable congestion control (default: 1)
-#   KCP_SNDWND          - KCP send window (default: 1024)
-#   KCP_RCVWND          - KCP receive window (default: 1024)
-#   KCP_MTU             - KCP MTU (default: 1350)
+#   QUIC_MAX_IDLE_TIMEOUT - QUIC maximum idle timeout (default: 1h)
+#   QUIC_MAX_INCOMING_STREAMS - QUIC max incoming bidirectional streams (default: 1000)
+#   QUIC_MAX_INCOMING_UNI_STREAMS - QUIC max incoming unidirectional streams (default: 1000)
+#   QUIC_INITIAL_STREAM_WINDOW - QUIC initial stream receive window in bytes (default: 524288)
+#   QUIC_MAX_STREAM_WINDOW - QUIC max stream receive window in bytes (default: 6291456)
+#   QUIC_INITIAL_CONN_WINDOW - QUIC initial connection receive window in bytes (default: 1048576)
+#   QUIC_MAX_CONN_WINDOW - QUIC max connection receive window in bytes (default: 15728640)
+#   QUIC_KEEPALIVE      - QUIC keep-alive period (default: 30s)
+#   QUIC_DISABLE_PMTU   - Disable QUIC path MTU discovery (default: false)
+#   QUIC_ENABLE_0RTT    - Enable QUIC 0-RTT (default: false)
 #   EXTRA_FLAGS         - Additional flags to pass to uproxy-client
 #
 
@@ -72,7 +73,7 @@ detect_binary() {
     
     case "$arch" in
         x86_64)
-            echo "$BINARY_DIR/uproxy-linux-amd64"
+            echo "$BINARY_DIR/uproxy-linux-x86_64"
             ;;
         aarch64|arm64)
             echo "$BINARY_DIR/uproxy-linux-arm64"
@@ -148,21 +149,20 @@ build_args() {
     
     # Timeouts
     args+=(--idle-timeout "${IDLE_TIMEOUT:-1h}")
-    args+=(--ssh-timeout "${SSH_TIMEOUT:-10s}")
-    args+=(--reconnect-interval "${RECONNECT_INTERVAL:-1s}")
-    
-    # Buffer sizes
+    args+=(--ssh-timeout "${SSH_TIMEOUT:-30s}")
     args+=(--tcp-buf "${TCP_BUF:-32768}")
-    args+=(--udp-sockbuf "${UDP_SOCKBUF:-4194304}")
     
-    # KCP parameters
-    args+=(--kcp-nodelay "${KCP_NODELAY:-1}")
-    args+=(--kcp-interval "${KCP_INTERVAL:-10}")
-    args+=(--kcp-resend "${KCP_RESEND:-2}")
-    args+=(--kcp-nc "${KCP_NC:-1}")
-    args+=(--kcp-sndwnd "${KCP_SNDWND:-1024}")
-    args+=(--kcp-rcvwnd "${KCP_RCVWND:-1024}")
-    args+=(--kcp-mtu "${KCP_MTU:-1350}")
+    # QUIC protocol configuration
+    [[ -n "${QUIC_MAX_IDLE_TIMEOUT}" ]] && args+=(--quic-max-idle-timeout "${QUIC_MAX_IDLE_TIMEOUT}")
+    [[ -n "${QUIC_MAX_INCOMING_STREAMS}" ]] && args+=(--quic-max-incoming-streams "${QUIC_MAX_INCOMING_STREAMS}")
+    [[ -n "${QUIC_MAX_INCOMING_UNI_STREAMS}" ]] && args+=(--quic-max-incoming-uni-streams "${QUIC_MAX_INCOMING_UNI_STREAMS}")
+    [[ -n "${QUIC_INITIAL_STREAM_WINDOW}" ]] && args+=(--quic-initial-stream-window "${QUIC_INITIAL_STREAM_WINDOW}")
+    [[ -n "${QUIC_MAX_STREAM_WINDOW}" ]] && args+=(--quic-max-stream-window "${QUIC_MAX_STREAM_WINDOW}")
+    [[ -n "${QUIC_INITIAL_CONN_WINDOW}" ]] && args+=(--quic-initial-conn-window "${QUIC_INITIAL_CONN_WINDOW}")
+    [[ -n "${QUIC_MAX_CONN_WINDOW}" ]] && args+=(--quic-max-conn-window "${QUIC_MAX_CONN_WINDOW}")
+    [[ -n "${QUIC_KEEPALIVE}" ]] && args+=(--quic-keepalive "${QUIC_KEEPALIVE}")
+    [[ -n "${QUIC_DISABLE_PMTU}" ]] && args+=(--quic-disable-pmtu "${QUIC_DISABLE_PMTU}")
+    [[ -n "${QUIC_ENABLE_0RTT}" ]] && args+=(--quic-enable-0rtt "${QUIC_ENABLE_0RTT}")
     
     # Extra flags
     if [[ -n "${EXTRA_FLAGS:-}" ]]; then

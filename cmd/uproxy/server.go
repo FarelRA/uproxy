@@ -93,8 +93,20 @@ func runServer(ctx context.Context, cfg *config.ServerConfig) (err error) {
 		return fmt.Errorf("failed to parse listen address: %w", err)
 	}
 
-	// Create QUIC server
-	quicConfig := quictransport.NewQUICConfig(nil)
+	// Create QUIC server with configuration from flags
+	quicOpts := quictransport.QUICConfigOptions{
+		MaxIdleTimeout:                 cfg.QUIC.MaxIdleTimeout,
+		MaxIncomingStreams:             cfg.QUIC.MaxIncomingStreams,
+		MaxIncomingUniStreams:          cfg.QUIC.MaxIncomingUniStreams,
+		InitialStreamReceiveWindow:     cfg.QUIC.InitialStreamReceiveWindow,
+		MaxStreamReceiveWindow:         cfg.QUIC.MaxStreamReceiveWindow,
+		InitialConnectionReceiveWindow: cfg.QUIC.InitialConnectionReceiveWindow,
+		MaxConnectionReceiveWindow:     cfg.QUIC.MaxConnectionReceiveWindow,
+		KeepAlivePeriod:                cfg.QUIC.KeepAlivePeriod,
+		DisablePathMTUDiscovery:        cfg.QUIC.DisablePathMTUDiscovery,
+		Enable0RTT:                     cfg.QUIC.Enable0RTT,
+	}
+	quicConfig := quictransport.NewQUICConfig(&quicOpts)
 	server := quictransport.NewServer(listenAddr, tlsConfig, quicConfig)
 
 	if err := server.Listen(); err != nil {

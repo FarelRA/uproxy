@@ -18,6 +18,18 @@ func AddCommonFlags(cmd *cobra.Command, cfg *CommonConfig) {
 	cmd.Flags().DurationVar(&cfg.IdleTimeout, "idle-timeout", DefaultIdleTimeout, "Idle timeout for connections")
 	cmd.Flags().IntVar(&cfg.TCPBufSize, "tcp-buf", DefaultTCPBufSize, "TCP buffer size")
 
+	// QUIC protocol flags
+	cmd.Flags().DurationVar(&cfg.QUIC.MaxIdleTimeout, "quic-max-idle-timeout", DefaultQUICMaxIdleTimeout, "QUIC maximum idle timeout")
+	cmd.Flags().Int64Var(&cfg.QUIC.MaxIncomingStreams, "quic-max-incoming-streams", DefaultQUICMaxIncomingStreams, "QUIC maximum incoming bidirectional streams")
+	cmd.Flags().Int64Var(&cfg.QUIC.MaxIncomingUniStreams, "quic-max-incoming-uni-streams", DefaultQUICMaxIncomingUniStreams, "QUIC maximum incoming unidirectional streams")
+	cmd.Flags().Uint64Var(&cfg.QUIC.InitialStreamReceiveWindow, "quic-initial-stream-window", DefaultQUICInitialStreamReceiveWindow, "QUIC initial stream receive window size (bytes)")
+	cmd.Flags().Uint64Var(&cfg.QUIC.MaxStreamReceiveWindow, "quic-max-stream-window", DefaultQUICMaxStreamReceiveWindow, "QUIC maximum stream receive window size (bytes)")
+	cmd.Flags().Uint64Var(&cfg.QUIC.InitialConnectionReceiveWindow, "quic-initial-conn-window", DefaultQUICInitialConnectionReceiveWindow, "QUIC initial connection receive window size (bytes)")
+	cmd.Flags().Uint64Var(&cfg.QUIC.MaxConnectionReceiveWindow, "quic-max-conn-window", DefaultQUICMaxConnectionReceiveWindow, "QUIC maximum connection receive window size (bytes)")
+	cmd.Flags().DurationVar(&cfg.QUIC.KeepAlivePeriod, "quic-keepalive", DefaultQUICKeepAlivePeriod, "QUIC keep-alive period")
+	cmd.Flags().BoolVar(&cfg.QUIC.DisablePathMTUDiscovery, "quic-disable-pmtu", DefaultQUICDisablePathMTUDiscovery, "Disable QUIC path MTU discovery")
+	cmd.Flags().BoolVar(&cfg.QUIC.Enable0RTT, "quic-enable-0rtt", DefaultQUICEnable0RTT, "Enable QUIC 0-RTT (requires session resumption)")
+
 	// SSH flags
 	cmd.Flags().StringVar(&cfg.SSH.Dir, "ssh-dir", "", "SSH directory (default: ~/.ssh)")
 	cmd.Flags().StringVar(&cfg.SSH.PrivateKey, "ssh-private-key", "", "SSH private key file (default: <ssh-dir>/id_ed25519)")

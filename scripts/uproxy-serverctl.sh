@@ -73,7 +73,7 @@ detect_binary() {
     
     case "$arch" in
         x86_64)
-            echo "$BINARY_DIR/uproxy-linux-amd64"
+            echo "$BINARY_DIR/uproxy-linux-x86_64"
             ;;
         aarch64|arm64)
             echo "$BINARY_DIR/uproxy-linux-arm64"

@@ -82,3 +82,17 @@ const (
 	DefaultMaxConcurrentConnections = 1000
 	DefaultClientBindAddr           = ":0" // All interfaces, any available port (OS chooses)
 )
+
+// QUIC Protocol Constants
+const (
+	DefaultQUICMaxIdleTimeout                 = 1 * time.Hour
+	DefaultQUICMaxIncomingStreams             = 1000
+	DefaultQUICMaxIncomingUniStreams          = 1000
+	DefaultQUICInitialStreamReceiveWindow     = 512 * 1024       // 512 KB
+	DefaultQUICMaxStreamReceiveWindow         = 6 * 1024 * 1024  // 6 MB
+	DefaultQUICInitialConnectionReceiveWindow = 1 * 1024 * 1024  // 1 MB
+	DefaultQUICMaxConnectionReceiveWindow     = 15 * 1024 * 1024 // 15 MB
+	DefaultQUICKeepAlivePeriod                = 30 * time.Second
+	DefaultQUICDisablePathMTUDiscovery        = false
+	DefaultQUICEnable0RTT                     = false
+)

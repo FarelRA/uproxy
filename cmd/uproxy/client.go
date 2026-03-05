@@ -183,11 +183,18 @@ func (cm *connectionManager) establishConnection(ctx context.Context) error {
 		NextProtos: []string{"uproxy-quic"},
 	}
 
-	// Create QUIC client
+	// Create QUIC client with configuration from flags
 	quicOpts := quictransport.QUICConfigOptions{
-		MaxIdleTimeout:  cm.cfg.IdleTimeout,
-		KeepAlivePeriod: 30 * time.Second,
-		EnableDatagrams: true,
+		MaxIdleTimeout:                 cm.cfg.QUIC.MaxIdleTimeout,
+		MaxIncomingStreams:             cm.cfg.QUIC.MaxIncomingStreams,
+		MaxIncomingUniStreams:          cm.cfg.QUIC.MaxIncomingUniStreams,
+		InitialStreamReceiveWindow:     cm.cfg.QUIC.InitialStreamReceiveWindow,
+		MaxStreamReceiveWindow:         cm.cfg.QUIC.MaxStreamReceiveWindow,
+		InitialConnectionReceiveWindow: cm.cfg.QUIC.InitialConnectionReceiveWindow,
+		MaxConnectionReceiveWindow:     cm.cfg.QUIC.MaxConnectionReceiveWindow,
+		KeepAlivePeriod:                cm.cfg.QUIC.KeepAlivePeriod,
+		DisablePathMTUDiscovery:        cm.cfg.QUIC.DisablePathMTUDiscovery,
+		Enable0RTT:                     cm.cfg.QUIC.Enable0RTT,
 	}
 	quicConfig := quictransport.NewQUICConfig(&quicOpts)
 

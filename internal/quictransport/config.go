@@ -36,27 +36,31 @@ var (
 
 // QUICConfigOptions contains options for creating a QUIC configuration.
 type QUICConfigOptions struct {
-	MaxIdleTimeout          time.Duration
-	KeepAlivePeriod         time.Duration
-	MaxIncomingStreams      int64
-	MaxIncomingUniStreams   int64
-	InitialStreamWindow     uint64
-	InitialConnectionWindow uint64
-	EnableDatagrams         bool
-	Allow0RTT               bool
+	MaxIdleTimeout                 time.Duration
+	KeepAlivePeriod                time.Duration
+	MaxIncomingStreams             int64
+	MaxIncomingUniStreams          int64
+	InitialStreamReceiveWindow     uint64
+	MaxStreamReceiveWindow         uint64
+	InitialConnectionReceiveWindow uint64
+	MaxConnectionReceiveWindow     uint64
+	DisablePathMTUDiscovery        bool
+	Enable0RTT                     bool
 }
 
 // DefaultQUICConfigOptions returns the default QUIC configuration options.
 func DefaultQUICConfigOptions() *QUICConfigOptions {
 	return &QUICConfigOptions{
-		MaxIdleTimeout:          DefaultMaxIdleTimeout,
-		KeepAlivePeriod:         DefaultKeepAlivePeriod,
-		MaxIncomingStreams:      DefaultMaxIncomingStreams,
-		MaxIncomingUniStreams:   DefaultMaxIncomingUniStreams,
-		InitialStreamWindow:     0, // Use QUIC default
-		InitialConnectionWindow: 0, // Use QUIC default
-		EnableDatagrams:         true,
-		Allow0RTT:               true,
+		MaxIdleTimeout:                 DefaultMaxIdleTimeout,
+		KeepAlivePeriod:                DefaultKeepAlivePeriod,
+		MaxIncomingStreams:             DefaultMaxIncomingStreams,
+		MaxIncomingUniStreams:          DefaultMaxIncomingUniStreams,
+		InitialStreamReceiveWindow:     0, // Use QUIC default
+		MaxStreamReceiveWindow:         0, // Use QUIC default
+		InitialConnectionReceiveWindow: 0, // Use QUIC default
+		MaxConnectionReceiveWindow:     0, // Use QUIC default
+		DisablePathMTUDiscovery:        false,
+		Enable0RTT:                     false,
 	}
 }
 
@@ -68,10 +72,10 @@ func NewQUICConfig(opts *QUICConfigOptions) *quic.Config {
 	}
 
 	config := &quic.Config{
-		MaxIdleTimeout:  opts.MaxIdleTimeout,
-		KeepAlivePeriod: opts.KeepAlivePeriod,
-		EnableDatagrams: opts.EnableDatagrams,
-		Allow0RTT:       opts.Allow0RTT,
+		MaxIdleTimeout:          opts.MaxIdleTimeout,
+		KeepAlivePeriod:         opts.KeepAlivePeriod,
+		DisablePathMTUDiscovery: opts.DisablePathMTUDiscovery,
+		Allow0RTT:               opts.Enable0RTT,
 	}
 
 	if opts.MaxIncomingStreams > 0 {
@@ -82,12 +86,20 @@ func NewQUICConfig(opts *QUICConfigOptions) *quic.Config {
 		config.MaxIncomingUniStreams = opts.MaxIncomingUniStreams
 	}
 
-	if opts.InitialStreamWindow > 0 {
-		config.InitialStreamReceiveWindow = opts.InitialStreamWindow
+	if opts.InitialStreamReceiveWindow > 0 {
+		config.InitialStreamReceiveWindow = opts.InitialStreamReceiveWindow
 	}
 
-	if opts.InitialConnectionWindow > 0 {
-		config.InitialConnectionReceiveWindow = opts.InitialConnectionWindow
+	if opts.MaxStreamReceiveWindow > 0 {
+		config.MaxStreamReceiveWindow = opts.MaxStreamReceiveWindow
+	}
+
+	if opts.InitialConnectionReceiveWindow > 0 {
+		config.InitialConnectionReceiveWindow = opts.InitialConnectionReceiveWindow
+	}
+
+	if opts.MaxConnectionReceiveWindow > 0 {
+		config.MaxConnectionReceiveWindow = opts.MaxConnectionReceiveWindow
 	}
 
 	return config

@@ -19,7 +19,22 @@ type CommonConfig struct {
 
 	TCPBufSize int
 
-	SSH SSHConfig
+	SSH  SSHConfig
+	QUIC QUICConfig
+}
+
+// QUICConfig holds QUIC protocol configuration
+type QUICConfig struct {
+	MaxIdleTimeout                 time.Duration
+	MaxIncomingStreams             int64
+	MaxIncomingUniStreams          int64
+	InitialStreamReceiveWindow     uint64
+	MaxStreamReceiveWindow         uint64
+	InitialConnectionReceiveWindow uint64
+	MaxConnectionReceiveWindow     uint64
+	KeepAlivePeriod                time.Duration
+	DisablePathMTUDiscovery        bool
+	Enable0RTT                     bool
 }
 
 // SSHConfig holds SSH configuration paths
@@ -82,6 +97,18 @@ func NewDefaultCommonConfig() CommonConfig {
 		IdleTimeout: DefaultIdleTimeout,
 		TCPBufSize:  DefaultTCPBufSize,
 		SSH:         SSHConfig{},
+		QUIC: QUICConfig{
+			MaxIdleTimeout:                 DefaultQUICMaxIdleTimeout,
+			MaxIncomingStreams:             DefaultQUICMaxIncomingStreams,
+			MaxIncomingUniStreams:          DefaultQUICMaxIncomingUniStreams,
+			InitialStreamReceiveWindow:     DefaultQUICInitialStreamReceiveWindow,
+			MaxStreamReceiveWindow:         DefaultQUICMaxStreamReceiveWindow,
+			InitialConnectionReceiveWindow: DefaultQUICInitialConnectionReceiveWindow,
+			MaxConnectionReceiveWindow:     DefaultQUICMaxConnectionReceiveWindow,
+			KeepAlivePeriod:                DefaultQUICKeepAlivePeriod,
+			DisablePathMTUDiscovery:        DefaultQUICDisablePathMTUDiscovery,
+			Enable0RTT:                     DefaultQUICEnable0RTT,
+		},
 	}
 }
 
