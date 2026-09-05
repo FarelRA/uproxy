@@ -1,3 +1,5 @@
+> **Status:** Active — stable
+
 # uproxy (The Uninterruptible Proxy)
 
 **uproxy** is a highly optimized, cryptographically secure, and completely uninterruptible proxy supporting both SOCKS5 and TUN modes. 
